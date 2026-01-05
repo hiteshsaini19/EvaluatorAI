@@ -46,7 +46,7 @@ export function BulkUpload({ categories, onUploadComplete }: BulkUploadProps) {
             const line = lines[i].trim();
             if (!line) continue;
 
-            const row = [];
+            const row: string[] = [];
             let inQuote = false;
             let p = 0;
             let start = 0;

@@ -1,11 +1,19 @@
 import axios from 'axios';
 import { getToken } from './auth';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+// IMPORTANT: Remove the fallback localhost URL for production
+const API_URL = process.env.NEXT_PUBLIC_API_URL;
+
+if (!API_URL) {
+  throw new Error('NEXT_PUBLIC_API_URL environment variable is not defined');
+}
 
 const api = axios.create({
   baseURL: API_URL,
   withCredentials: true,
+  headers: {
+    'Content-Type': 'application/json',
+  },
 });
 
 // Add token to all requests
@@ -27,19 +35,17 @@ api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response && error.response.status === 401) {
-      if (error.response && error.response.status === 401) {
-        if (typeof window !== 'undefined') {
-          localStorage.removeItem('auth_token');
-          localStorage.removeItem('user');
-          window.location.href = '/login';
-        }
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('user');
+        window.location.href = '/login';
       }
     }
     return Promise.reject(error);
   }
 );
 
-// API calls
+// API calls remain the same...
 export const login = (email: string, password: string) =>
   api.post('/auth/login', { email, password });
 
@@ -72,7 +78,6 @@ export const getQuestions = (
   filters: { category_id?: number; parent_category?: string; difficulty?: string; search?: string } = {}
 ) =>
   api.get('/questions/', { params: { page, per_page, ...filters } });
-
 
 export const createQuestion = (data: any) =>
   api.post('/questions/', data);
