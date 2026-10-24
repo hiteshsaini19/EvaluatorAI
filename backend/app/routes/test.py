@@ -250,3 +250,27 @@ def get_test_by_code(
         user_id=db_test.user_id,
         created_at=db_test.created_at
     )
+
+
+# Delete test - Admin can delete any, Creator only their own
+@router.delete("/{test_id}")
+def delete_test(
+    test_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_creator_or_admin)
+):
+    db_test = db.query(models.Test).filter(models.Test.id == test_id).first()
+
+    if not db_test:
+        raise HTTPException(status_code=404, detail="Test not found")
+
+    if current_user.role.role_name != "Admin" and db_test.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="You can only delete your own tests")
+
+    # Delete candidate responses for this test first (responses.test_id is NOT NULL)
+    db.query(models.Response).filter(models.Response.test_id == test_id).delete()
+
+    db.delete(db_test)
+    db.commit()
+
+    return {"message": "Test and its results deleted successfully"}

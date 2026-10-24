@@ -34,7 +34,9 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response && error.response.status === 401) {
+    // Skip the login call itself, so a wrong password shows its error instead of reloading the page
+    const isLoginRequest = error.config?.url === '/auth/login';
+    if (error.response && error.response.status === 401 && !isLoginRequest) {
       if (typeof window !== 'undefined') {
         localStorage.removeItem('auth_token');
         localStorage.removeItem('user');
@@ -48,6 +50,8 @@ api.interceptors.response.use(
 // API calls remain the same...
 export const login = (email: string, password: string) =>
   api.post('/auth/login', { email, password });
+
+export const getMe = () => api.get('/auth/me');
 
 export const getCategories = () =>
   api.get('/categories/');
@@ -90,16 +94,13 @@ export const deleteQuestion = (id: number) =>
 
 export const getTests = () => api.get('/tests/my-tests');
 
-export const createTest = (data: { questions: any[] }) =>
+export const createTest = (data: { test_name?: string; questions: any[] }) =>
   api.post('/tests/create', data);
 
 export const deleteTest = (id: number) =>
   api.delete(`/tests/${id}`);
 
 export const getResults = () => api.get('/candidates/results');
-
-export const getCandidates = (testId?: number) =>
-  api.get('/candidates/', { params: { test_id: testId } });
 
 export const getResultDetail = (id: number) =>
   api.get(`/candidates/result/${id}`);

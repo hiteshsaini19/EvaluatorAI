@@ -23,6 +23,10 @@ export function SubmitPreview({
     onSubmit,
     isSubmitting
 }: SubmitPreviewProps) {
+    // Backend requires every question to be answered
+    const unansweredCount = totalQuestions - answeredCount;
+    const allAnswered = unansweredCount === 0;
+
     return (
         <div className="flex items-center justify-center p-6 min-h-[calc(100vh-100px)]">
             <Card className="w-full max-w-md shadow-2xl border-none rounded-[2rem] overflow-hidden text-center">
@@ -51,9 +55,16 @@ export function SubmitPreview({
                         </div>
                         <div className="flex justify-between items-center group">
                             <span className="text-sm font-bold text-gray-400">Questions Answered:</span>
-                            <span className="text-sm font-black text-green-600">{answeredCount}/{totalQuestions}</span>
+                            <span className={`text-sm font-black ${allAnswered ? 'text-green-600' : 'text-amber-600'}`}>{answeredCount}/{totalQuestions}</span>
                         </div>
                     </div>
+
+                    {!allAnswered && (
+                        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm font-medium text-amber-700">
+                            You have {unansweredCount} unanswered {unansweredCount === 1 ? 'question' : 'questions'}.
+                            All questions must be answered before submitting.
+                        </div>
+                    )}
 
                     <div className="grid grid-cols-2 gap-4">
                         <Button
@@ -65,7 +76,7 @@ export function SubmitPreview({
                         </Button>
                         <Button
                             onClick={onSubmit}
-                            disabled={isSubmitting}
+                            disabled={isSubmitting || !allAnswered}
                             className="h-12 rounded-xl bg-green-600 hover:bg-green-700 text-white font-bold transition-all active:scale-95 shadow-lg shadow-green-100"
                         >
                             {isSubmitting ? 'Submitting...' : 'Submit Test'}

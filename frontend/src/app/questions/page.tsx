@@ -127,19 +127,16 @@ const handleDelete = async (id: number) => {
   }
 };
 
+  // Errors propagate to QuestionModal, which shows the message and stays open
   const handleSaveQuestion = async (data: any) => {
-    try {
-      if (editingQuestion) {
-        await updateQuestion(editingQuestion.id, data);
-      } else {
-        await createQuestion(data);
-      }
-      fetchData(); // Refresh list
-      setIsModalOpen(false);
-      setEditingQuestion(null);
-    } catch (e) {
-      alert('Failed to save question');
+    if (editingQuestion) {
+      await updateQuestion(editingQuestion.id, data);
+    } else {
+      await createQuestion(data);
     }
+    fetchData(); // Refresh list
+    setIsModalOpen(false);
+    setEditingQuestion(null);
   };
 
   const openCreateModal = () => {

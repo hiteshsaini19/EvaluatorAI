@@ -16,6 +16,24 @@ export const getToken = (): string | null => {
 export const removeToken = () => {
   if (typeof window !== 'undefined') {
     localStorage.removeItem('auth_token');
+    localStorage.removeItem('user');
+  }
+};
+
+export const saveUser = (user: unknown) => {
+  if (typeof window !== 'undefined') {
+    localStorage.setItem('user', JSON.stringify(user));
+  }
+};
+
+export const getUserName = (): string | null => {
+  if (typeof window === 'undefined') return null;
+  const userStr = localStorage.getItem('user');
+  if (!userStr) return null;
+  try {
+    return JSON.parse(userStr).name || null;
+  } catch (e) {
+    return null;
   }
 };
 

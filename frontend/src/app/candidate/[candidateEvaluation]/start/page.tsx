@@ -146,7 +146,9 @@ export default function CandidateTestPage() {
         answeredCount={Object.keys(answers).length}
         totalQuestions={test.questions.length}
         onReview={() => {
-           setCurrentIdx(0);
+           // Jump to the first unanswered question (or the start if all are answered)
+           const firstUnanswered = test.questions.findIndex(q => !answers[q.question_id]);
+           setCurrentIdx(firstUnanswered === -1 ? 0 : firstUnanswered);
            setView('testing');
         }}
         onSubmit={handleSubmit}

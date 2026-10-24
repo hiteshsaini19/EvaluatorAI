@@ -137,26 +137,30 @@ export default function QuestionModal({
                 return;
             }
 
+            // Only send filled options (C and D are optional; backend rejects empty ones)
+            const options: Record<string, string> = {};
+            ([['a', optionA], ['b', optionB], ['c', optionC], ['d', optionD]] as const).forEach(([key, value]) => {
+                if (value.trim()) options[key] = value.trim();
+            });
+
+            if (!options[correctOption]) {
+                alert(`Correct answer is Option ${correctOption.toUpperCase()}, but that option is empty.`);
+                setLoading(false);
+                return;
+            }
+
             const payload = {
                 category_id: finalId,
                 question_text: questionText,
-                options: {
-                    a: optionA,
-                    b: optionB,
-                    c: optionC,
-                    d: optionD
-                },
+                options,
                 correct_option: correctOption,
                 difficulty: difficulty
             };
             await onSubmit(payload);
             onClose();
-            // Don't close here, let parent handle it if needed, but usually we close.
-            // Actually the prop says Promise<void>, so we can wait.
-             onClose();
-        } catch (err) {
+        } catch (err: any) {
             console.error(err);
-            alert('Failed to save question');
+            alert(err.response?.data?.error || 'Failed to save question');
         } finally {
             setLoading(false);
         }

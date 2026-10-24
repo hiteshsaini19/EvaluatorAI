@@ -6,8 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { login } from '@/lib/api';
-import { saveToken, isAuthenticated } from '@/lib/auth';
+import { login, getMe } from '@/lib/api';
+import { saveToken, saveUser, removeToken, isAuthenticated } from '@/lib/auth';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -35,9 +35,15 @@ export default function LoginPage() {
       const token = response.data.access_token;
       
       saveToken(token);
+
+      // Store user (incl. role) so pages can hide actions the role isn't allowed to do
+      const me = await getMe();
+      saveUser(me.data);
+
       router.push('/');
     } catch (err: any) {
       console.error('Login error:', err);
+      removeToken();
       setError(err.response?.data?.error || 'Invalid email or password');
       setLoading(false);
     }

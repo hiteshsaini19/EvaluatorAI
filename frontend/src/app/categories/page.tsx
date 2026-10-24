@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { isAuthenticated } from '@/lib/auth';
+import { isAuthenticated, getUserRole } from '@/lib/auth';
 import {
   getCategories,
   createCategory,
@@ -46,6 +46,7 @@ export default function CategoriesPage() {
   const [error, setError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [mounted, setMounted] = useState(false);
+  const [userRole, setUserRole] = useState<string | null>(null);
 
   // Modal states
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -61,9 +62,13 @@ export default function CategoriesPage() {
       router.push('/login');
       return;
     }
+    setUserRole(getUserRole());
 
     fetchData();
   }, [router]);
+
+  // Only Admin can create/edit/delete categories
+  const isCreator = userRole === 'Creator';
 
   // Fetch categories
 const fetchData = async () => {
@@ -210,13 +215,15 @@ const fetchData = async () => {
             />
           </div>
 
-          <Button
-            onClick={handleCreate}
-            className="gap-2 bg-indigo-600 hover:bg-indigo-700"
-          >
-            <Plus className="w-4 h-4" />
-            New Category
-          </Button>
+          {!isCreator && (
+            <Button
+              onClick={handleCreate}
+              className="gap-2 bg-indigo-600 hover:bg-indigo-700"
+            >
+              <Plus className="w-4 h-4" />
+              New Category
+            </Button>
+          )}
         </div>
 
         {/* Table */}
@@ -283,6 +290,7 @@ const fetchData = async () => {
                       </TableCell>
 
                       <TableCell className="text-right">
+                        {!isCreator && (
                         <div className="flex justify-end gap-2">
                           <Button
                             variant="ghost"
@@ -302,6 +310,7 @@ const fetchData = async () => {
                             <Trash2 className="w-4 h-4" />
                           </Button>
                         </div>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}

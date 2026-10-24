@@ -63,11 +63,13 @@ export default function TestsPage() {
   };
 
   const handleDelete = async (id: number) => {
-    if (!confirm('Are you sure you want to delete this test?')) return;
+    if (!confirm('Delete this test? All candidate results for this test will also be deleted.')) return;
     try {
       await deleteTest(id);
       fetchTests();
-    } catch (e) { alert('Failed to delete'); }
+    } catch (e: any) {
+      alert(e.response?.data?.detail || 'Failed to delete test');
+    }
   };
 
   const copyLink = (testCode: string) => {
@@ -121,7 +123,7 @@ export default function TestsPage() {
                   <div className="flex gap-2">
                     <Input
                       readOnly
-                      value={`${window.location.origin}/test/${selectedTest.test_code}`}
+                      value={`${window.location.origin}/candidate/${selectedTest.test_code}`}
                       className="bg-gray-50 border-gray-200 text-gray-600"
                     />
                     <Button
@@ -307,12 +309,20 @@ export default function TestsPage() {
                     </TableCell>
 
                     <TableCell className="text-right pr-10">
-                      <button
-                        onClick={() => { setSelectedTest(test); setView('preview'); }}
-                        className="text-blue-700 hover:text-blue-900 text-sm font-bold transition-colors"
-                      >
-                        Preview
-                      </button>
+                      <div className="flex justify-end items-center gap-4">
+                        <button
+                          onClick={() => { setSelectedTest(test); setView('preview'); }}
+                          className="text-blue-700 hover:text-blue-900 text-sm font-bold transition-colors"
+                        >
+                          Preview
+                        </button>
+                        <button
+                          onClick={() => handleDelete(test.id)}
+                          className="text-red-500 hover:text-red-700 text-sm font-bold transition-colors"
+                        >
+                          Delete
+                        </button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}

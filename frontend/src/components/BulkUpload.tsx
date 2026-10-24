@@ -123,16 +123,18 @@ export function BulkUpload({ categories, onUploadComplete }: BulkUploadProps) {
                             continue; // Skip execution for this item
                         }
 
+                        // Only send filled options (blank C/D columns are allowed)
+                        const options: Record<string, string> = {};
+                        (['a', 'b', 'c', 'd'] as const).forEach(key => {
+                            const value = item[`option_${key}`];
+                            if (value && value.trim()) options[key] = value.trim();
+                        });
+
                         // Construct payload
                         const payload = {
                             category_id: targetId,
                             question_text: item.question_text,
-                            options: {
-                                a: item.option_a,
-                                b: item.option_b,
-                                c: item.option_c,
-                                d: item.option_d
-                            },
+                            options,
                             correct_option: item.correct_answer.toLowerCase(),
                             difficulty: item.difficulty_level || 'Medium' // Default to Medium if missing
                         };

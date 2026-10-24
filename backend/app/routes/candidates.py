@@ -200,17 +200,32 @@ def get_public_test(
         questions=public_questions
     )
 
-# GET RESULT BY CANDIDATE ID (Admin/Creator Only)
-@router.get("/result/{candidate_id}", response_model=schemas.CandidateResultResponse)
+# GET RESULT BY RESPONSE ID (Admin/Creator Only)
+# Keyed by response ID (same ID the results list returns), since one candidate can take many tests
+@router.get("/result/{response_id}", response_model=schemas.CandidateResultResponse)
 def get_candidate_result(
-    candidate_id: int,
+    response_id: int,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_creator_or_admin)
 ):
 
+    # Get response record
+    response = db.query(models.Response).filter(
+        models.Response.id == response_id
+    ).first()
+
+    if not response:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "status": 404,
+                "error": "Result not found"
+            }
+        )
+
     # Get candidate
     candidate = db.query(models.Candidate).filter(
-        models.Candidate.id == candidate_id
+        models.Candidate.id == response.candidate_id
     ).first()
 
     if not candidate:
@@ -219,20 +234,6 @@ def get_candidate_result(
             content={
                 "status": 404,
                 "error": "Candidate not found"
-            }
-        )
-
-# Get response record
-    response = db.query(models.Response).filter(
-        models.Response.candidate_id == candidate_id
-    ).first()
-
-    if not response:
-        return JSONResponse(
-            status_code=404,
-            content={
-                "status": 404,
-                "error": "Response data not found for this candidate"
             }
         )
 
@@ -261,7 +262,8 @@ def get_candidate_result(
                 selected_option=answer["selected"],
                 correct_option=answer["correct"],
                 is_correct=answer["isCorrect"],
-                options=question["options"],
+                # Uppercase keys to match selected/correct, which are stored uppercase
+                options={key.upper(): value for key, value in question["options"].items()},
                 difficulty=question.get("difficulty", "Medium"),
                 category_name=question["category"]["name"]
             ))

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { isAuthenticated } from '@/lib/auth';
+import { isAuthenticated, getUserName } from '@/lib/auth';
 import TopNav from '@/components/TopNav';
 import Link from 'next/link';
 
@@ -10,11 +10,13 @@ export default function Home() {
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [userName, setUserName] = useState<string | null>(null);
 
   useEffect(() => {
     setMounted(true);
     const loggedIn = isAuthenticated();
     setIsLoggedIn(loggedIn);
+    setUserName(getUserName());
     
     if (!loggedIn) {
       router.push('/login');
@@ -46,7 +48,7 @@ export default function Home() {
       <div className="p-8">
         <div className="mb-8">
           <h2 className="text-3xl font-bold text-gray-800 mb-2">
-            Welcome back, Super Admin!
+            Welcome back{userName ? `, ${userName}` : ''}!
           </h2>
           <p className="text-gray-600">
             Here's an overview of your interview platform
