@@ -7,9 +7,48 @@ To resume work, take the **first phase not marked Completed** below.
 |---|---|---|---|
 | 1. Accounts and subjects | ✅ Completed | 2026-10-24 | `phase-1-accounts-subjects` |
 | 2. Test model, timers and candidate flow | ✅ Completed | 2026-10-25 | `phase-2-tests-timers-candidate-flow` |
-| 3. AI generation | ⏳ Next | — | — |
-| 4. Polish and hardening | Not started | — | — |
+| 3. AI generation | ✅ Code completed (quality check needs the AI key) | 2026-10-25 | `phase-3-ai-generation` |
+| 4. Polish and hardening | ⏳ Next | — | — |
 | 5. Free deployment | Not started | — | — |
+
+---
+
+## Phase 3: AI generation (Code completed 2026-10-25, quality check waits for the AI key)
+
+### Added
+- **Provider choice:** Google **Gemini** (`gemini-3.8-flash`, the model Google recommends for new projects) is the default. It's called through Gemini's OpenAI-compatible endpoint, so **Groq** and **OpenRouter** (or any OpenAI-compatible service via `AI_BASE_URL`) work by changing `AI_PROVIDER` / `AI_MODEL` / `AI_API_KEY` in `backend/.env`. No new Python dependency: the client uses the standard library.
+- **AI generator** (`backend/app/ai/`), used automatically once `AI_API_KEY` is set (until then tests still come from the example bank):
+  - **Prompt** (`prompt.py`): an expert assessment-writer role, the global rules (exactly 4 options and one answer, believable wrong options, no "all/none of the above", no trick wording, self-contained questions, code in fenced blocks, explanation of at most 25 words), the exact count table, each subject's scope with the rubric for each requested difficulty, and 1–2 example questions per (subject, difficulty) from the bank as style guides.
+  - **JSON output:** the request asks for JSON mode (`AI_RESPONSE_FORMAT=json_object`) and spells out the exact shape; replies wrapped in a ```json fence or extra text are also accepted.
+  - **Checks** (`parsing.py`): subject and difficulty must match a requested cell; options must be exactly A–D, not empty, not duplicated and not "all/none of the above"; the answer must be A–D; long explanations are trimmed. Near-duplicate questions are dropped, extra questions beyond a cell's count are ignored, and the correct answers are re-positioned so A–D are used about equally (wrong options are shuffled).
+  - **Splitting large tests:** the blueprint is split into requests of at most 20 questions (`AI_QUESTIONS_PER_CALL`), grouped by subject, run up to 3 at a time (`AI_MAX_PARALLEL_CALLS`) and merged. It's still one click.
+  - **One follow-up round** asks again for just the cells that came back short, listing the questions already written so they aren't repeated.
+  - **Time limit** of 90 seconds per request (`AI_TIMEOUT_SECONDS`), enforced for the whole round as well.
+- **Daily quotas:** a new `generation_log` table records every generation (source, status, requested and generated counts, provider, model, number of requests, duration, error details).
+  - Per creator: `AI_DAILY_LIMIT_PER_USER` (default 5) successful AI tests per day. Failed attempts don't count against it. Admin has no per-creator limit.
+  - Global: `AI_DAILY_LIMIT_GLOBAL` (default 50) AI attempts per day for everyone, counting failures, since they use the provider's quota too.
+  - Limits reset at 00:00 UTC. When one is reached, the creator gets a 429 with the reason and the reset time (also shown in their local time).
+- **`GET /tests/generation-quota`:** whether AI is switched on, and how many AI tests the creator has left today.
+- **Create Test page:** a banner shows how many AI tests are left today (or that AI isn't switched on yet), Generate is disabled once the limit is reached, and while generating it says "this can take up to a minute". Quota and AI error messages are shown inline.
+- **Database migration** `e8a3c5d17b42`: creates `generation_log`, with a working downgrade.
+
+### Changed
+- **Failures are clean:** nothing is saved when generation fails. A wrong key, rate limit, outage, timeout or unusable reply gives a short, specific message, and details go to `generation_log`. When no request succeeds, it stops instead of retrying, so it doesn't use more quota or double the wait. An AI test is only saved if at least half of the requested questions came back; otherwise the creator is asked to try again.
+- The ready screen's shortfall note says whether the AI or the bank ran short.
+- Explanations written by the AI appear on the View page and in result details (already supported in Phase 2).
+
+### Verified
+- With a local fake OpenAI-compatible server standing in for the provider:
+  - exact counts per (subject, difficulty) for a 45-question test over 3 requests, with answers spread 12/11/11/11 across A–D and each correct answer moved with its text;
+  - fenced JSON replies; invalid items rejected (answer "E", "All of the above", unknown subject);
+  - the follow-up round filling short cells; duplicates dropped and the test refused;
+  - unusable JSON, wrong key (401), rate limit (429) and a slow provider (timeout), each with one request and nothing saved;
+  - the per-creator limit, the global limit and Admin's exemption; the bank fallback with no key.
+- The migration up, down and up on a throwaway database; the local development database is migrated and seeded.
+
+### Waiting for the AI key
+- The plan's quality check (real tests for every subject and difficulty, read for correct answers, difficulty fit and duplicates, then rubric and prompt tuning) needs a real key. Put it in `backend/.env` as `AI_API_KEY` and restart the backend. Check your project's free-tier limits in Google AI Studio and set `AI_DAILY_LIMIT_GLOBAL` to fit them.
+- Note on Gemini's free tier: Google may use prompts and responses to improve its products. The prompts contain only subjects, rubrics and example questions, with no candidate data.
 
 ---
 

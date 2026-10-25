@@ -196,6 +196,16 @@ class TestGenerateResponse(BaseModel):
     requested_questions: int
     question_count: int
     shortfalls: List[TestShortfall] = []
+    source: str = "bank"  # ai / bank
+
+
+class GenerationQuota(BaseModel):
+    ai_enabled: bool  # False until an AI API key is configured; tests then come from the bank
+    used: int = 0
+    limit: Optional[int] = None  # None = no per-creator limit (Admin)
+    remaining: Optional[int] = None
+    resets_at: Optional[datetime] = None
+    blocked_message: Optional[str] = None
 
 
 class TestQuestion(BaseModel):

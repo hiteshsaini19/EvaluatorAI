@@ -112,3 +112,21 @@ class Response(Base):
     # Relationships
     candidate = relationship("Candidate", backref="responses")
     test = relationship("Test", backref="responses")
+
+
+# Generation Log: one row per test generation, used for the daily AI quotas
+class GenerationLog(Base):
+    __tablename__ = "generation_log"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False, index=True)
+    source = Column(String(20), nullable=False)  # ai / bank
+    status = Column(String(20), nullable=False)  # success / partial / failed
+    requested_count = Column(Integer, nullable=False)
+    question_count = Column(Integer, nullable=False)  # Questions actually generated
+    provider = Column(String(50), nullable=True)
+    model = Column(String(100), nullable=True)
+    calls = Column(Integer, nullable=False, default=0)  # AI requests made
+    duration_ms = Column(Integer, nullable=True)
+    error = Column(Text, nullable=True)  # Internal detail when something went wrong

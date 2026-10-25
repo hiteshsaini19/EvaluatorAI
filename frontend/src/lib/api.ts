@@ -91,6 +91,8 @@ export interface GenerateTestPayload {
 export const generateTest = (data: GenerateTestPayload) =>
   api.post('/tests/generate', data);
 
+export const getGenerationQuota = () => api.get('/tests/generation-quota');
+
 export const removeTestQuestion = (testId: number, questionId: string) =>
   api.delete(`/tests/${testId}/questions/${encodeURIComponent(questionId)}`);
 

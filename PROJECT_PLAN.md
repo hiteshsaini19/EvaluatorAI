@@ -314,6 +314,14 @@ Each phase lists: goal, backend work, frontend work, data changes, what is out o
 
 **Verification:** generate real tests through the app for every subject and each difficulty. Read them for correct answers, difficulty fit (Easy = theory, Hard = technical) and duplicates, and tune the rubrics and prompt until quality is consistent. Force failures (bad key, quota reached, malformed reply) to confirm the error paths.
 
+**Implementation notes (added after Phase 3 was built)**
+- Provider: Gemini (`gemini-3.8-flash`) by default, called through its OpenAI-compatible endpoint. Groq's free plan (about 8K tokens a minute) is too small for one 50-question request, and OpenRouter's free models allow 50 requests a day without a top-up. All three work by changing `AI_PROVIDER` / `AI_MODEL` / `AI_API_KEY`.
+- Without `AI_API_KEY` the bank generator from Phase 2 is used, so development never waits on the key.
+- Requests hold at most 20 questions and run up to 3 in parallel. Settings: `AI_QUESTIONS_PER_CALL`, `AI_MAX_PARALLEL_CALLS`, `AI_TIMEOUT_SECONDS`, `AI_MAX_OUTPUT_TOKENS`, `AI_RESPONSE_FORMAT`.
+- An AI test is saved only if at least half of the requested questions came back. A shorter result counts as failed and nothing is saved. Between half and all of them, it's saved with a shortfall note, like the bank.
+- When no request succeeds (wrong key, rate limit, outage, timeout), no follow-up round is made.
+- Quotas: the per-creator cap counts only successful AI tests, and Admin is exempt. The global cap counts every AI attempt. Days are UTC.
+
 ---
 
 ### Phase 4: Polish and hardening

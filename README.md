@@ -18,7 +18,7 @@ render.yaml Render blueprint for the backend (rootDir: backend)
 - Each creator sees only their own tests and results; Admin sees everything
 - Fixed catalogue of 24 subjects in 8 groups, each with a topic scope and Easy/Medium/Hard rubric (`backend/app/data/subjects.py`)
 - Example question bank (Admin): 144 starter questions, create, edit, delete, filter by group/subject/difficulty, search, CSV bulk import
-- Test generation: pick subjects, difficulties, number of questions, duration and link validity; the questions are drawn from the example bank for now (AI generation comes next). Each test gets a unique `TEST-XXXXXXXX` code and link
+- AI test generation: pick subjects, difficulties, number of questions, duration and link validity, and one click writes the test using each subject's scope and difficulty rubric, with example questions as style guides. Answers are checked, de-duplicated and spread evenly across A–D, with daily limits per creator and overall. Without an AI key, questions are drawn from the example bank. Each test gets a unique `TEST-XXXXXXXX` code and link
 - View a test with correct answers and remove questions until the first candidate starts
 - Candidate flow: name/email entry, server-enforced countdown, answers saved as you go, refresh resumes, auto-submit when time runs out, one attempt per email
 - Link validity: an expired link blocks new candidates while anyone mid-test can finish
@@ -58,6 +58,18 @@ SECRET_KEY=change-me-to-any-long-random-string
 ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=60
 ```
+
+To let AI write the questions, add these lines too (without a key, tests are drawn from the example question bank):
+
+```
+AI_PROVIDER=gemini            # gemini, groq or openrouter (all called through their OpenAI-compatible API)
+AI_MODEL=gemini-3.8-flash     # optional for gemini and groq, which have defaults
+AI_API_KEY=your-key           # Gemini: create one at https://aistudio.google.com/apikey
+AI_DAILY_LIMIT_PER_USER=5     # AI tests per creator per day (Admin has no limit)
+AI_DAILY_LIMIT_GLOBAL=50      # AI attempts per day for everyone; keep it inside the provider's free quota
+```
+
+Optional tuning: `AI_BASE_URL` (any other OpenAI-compatible endpoint), `AI_TIMEOUT_SECONDS` (90), `AI_QUESTIONS_PER_CALL` (20; bigger tests are split into several requests), `AI_MAX_PARALLEL_CALLS` (3), `AI_MAX_OUTPUT_TOKENS` (16000) and `AI_RESPONSE_FORMAT` (`json_object`, or `none` for providers that reject it). Daily limits reset at 00:00 UTC.
 
 The database schema is managed only by Alembic, so run the migrations before starting the server (and again after pulling changes that add migrations). Then seed:
 

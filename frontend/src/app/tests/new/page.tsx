@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { isAuthenticated } from '@/lib/auth';
-import { getSubjects, generateTest, GenerateTestPayload } from '@/lib/api';
+import { getSubjects, generateTest, getGenerationQuota, GenerateTestPayload } from '@/lib/api';
 import { Subject, groupSubjects } from '@/lib/subjects';
 import { DIFFICULTIES, candidateLink, formatDateTime } from '@/lib/tests';
 import TopNav from '@/components/TopNav';
@@ -12,7 +12,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { AlertTriangle, Check, CheckCircle2, ChevronLeft, Copy, Loader2, Sparkles } from 'lucide-react';
+import { AlertTriangle, Check, CheckCircle2, ChevronLeft, Copy, Info, Loader2, Sparkles } from 'lucide-react';
 
 const VALIDITY_OPTIONS = [
   { value: '24', label: '1 day' },
@@ -35,7 +35,20 @@ interface GeneratedTest {
   requested_questions: number;
   question_count: number;
   shortfalls: Shortfall[];
+  source: 'ai' | 'bank';
 }
+
+interface GenerationQuota {
+  ai_enabled: boolean;
+  used: number;
+  limit: number | null;
+  remaining: number | null;
+  resets_at: string | null;
+  blocked_message: string | null;
+}
+
+const formatLocalTime = (iso: string) =>
+  new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 
 const clampQuestions = (n: number) => Math.min(100, Math.max(5, n));
 
@@ -65,6 +78,7 @@ export default function CreateTestPage() {
   const [generating, setGenerating] = useState(false);
   const [created, setCreated] = useState<GeneratedTest | null>(null);
   const [copied, setCopied] = useState(false);
+  const [quota, setQuota] = useState<GenerationQuota | null>(null);
 
   useEffect(() => {
     if (!isAuthenticated()) {
@@ -75,6 +89,9 @@ export default function CreateTestPage() {
       .then(res => setSubjects(res.data))
       .catch(() => setServerError('Failed to load subjects. Please refresh the page.'))
       .finally(() => setLoadingSubjects(false));
+    getGenerationQuota()
+      .then(res => setQuota(res.data))
+      .catch(() => setQuota(null));  // The banner is optional; generating still works
   }, [router]);
 
   const groups = useMemo(() => groupSubjects(subjects), [subjects]);
@@ -169,8 +186,15 @@ export default function CreateTestPage() {
     try {
       const res = await generateTest(payload);
       setCreated(res.data);
+      getGenerationQuota().then(r => setQuota(r.data)).catch(() => {});
     } catch (err: any) {
-      setServerError(err.response?.data?.error || 'Failed to generate the test. Please try again.');
+      const data = err.response?.data;
+      let message = data?.error || 'Failed to generate the test. Check your connection and try again.';
+      if (data?.code === 'quota' && data?.retry_at) {
+        message += ` (That's ${formatLocalTime(data.retry_at)} your time.)`;
+        getGenerationQuota().then(r => setQuota(r.data)).catch(() => {});
+      }
+      setServerError(message);
     } finally {
       setGenerating(false);
     }
@@ -208,7 +232,11 @@ export default function CreateTestPage() {
                     <AlertTriangle className="w-4 h-4" />
                     Only {created.question_count} of {created.requested_questions} questions could be added
                   </div>
-                  <p className="mb-2">The example question bank doesn&apos;t have enough questions for:</p>
+                  <p className="mb-2">
+                    {created.source === 'ai'
+                      ? "The AI couldn't write enough valid questions for:"
+                      : "The example question bank doesn't have enough questions for:"}
+                  </p>
                   <ul className="list-disc pl-5 space-y-0.5">
                     {created.shortfalls.map(s => (
                       <li key={`${s.subject}-${s.difficulty}`}>
@@ -438,6 +466,23 @@ export default function CreateTestPage() {
           </CardContent>
         </Card>
 
+        {quota && (
+          <div className={`flex items-start gap-2 rounded-lg border p-4 text-sm ${
+            quota.blocked_message ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-blue-50 border-blue-100 text-blue-800'
+          }`}>
+            <Info className="w-4 h-4 mt-0.5 shrink-0" />
+            <span>
+              {!quota.ai_enabled
+                ? "AI generation isn't switched on yet, so questions are picked from the example question bank."
+                : quota.blocked_message
+                  ? `${quota.blocked_message} You can generate more after ${quota.resets_at ? formatLocalTime(quota.resets_at) : 'midnight UTC'}.`
+                  : quota.limit === null
+                    ? 'Questions are written by AI. Admin accounts have no daily limit.'
+                    : `Questions are written by AI. You can generate ${quota.remaining} more ${quota.remaining === 1 ? 'test' : 'tests'} today (${quota.limit} per day).`}
+            </span>
+          </div>
+        )}
+
         {serverError && (
           <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-4 text-sm">{serverError}</div>
         )}
@@ -445,11 +490,11 @@ export default function CreateTestPage() {
         <div className="flex flex-wrap items-center gap-3">
           <Button
             type="submit"
-            disabled={generating || loadingSubjects}
+            disabled={generating || loadingSubjects || !!quota?.blocked_message}
             className="bg-blue-600 hover:bg-blue-700 h-11 px-8 font-semibold"
           >
             {generating
-              ? <><Loader2 className="w-4 h-4 animate-spin" /> Generating your test...</>
+              ? <><Loader2 className="w-4 h-4 animate-spin" /> {quota?.ai_enabled ? 'Generating your test… this can take up to a minute' : 'Generating your test...'}</>
               : <><Sparkles className="w-4 h-4" /> Generate Test</>}
           </Button>
           <Link href="/tests">

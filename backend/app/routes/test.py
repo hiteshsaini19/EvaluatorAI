@@ -8,13 +8,31 @@ from app.database import get_db
 from app.auth import get_current_user, require_creator_or_admin
 from app.attempts import now_utc
 from app.generation import DIFFICULTY_ORDER, build_blueprint, get_generator
+from app.ai.client import AIError
+from app.ai.quota import quota_status
+from app.ai.settings import load_settings
 import json
+import math
+import time
 import uuid
 
 router = APIRouter(prefix="/tests", tags=["Tests"])
 
 # A custom link expiry can be at most this far ahead
 MAX_CUSTOM_VALIDITY = timedelta(days=365)
+
+# An AI test is only saved if at least this share of the requested questions came back
+MIN_AI_SHARE = 0.5
+
+# What the creator is told when the AI request fails (details go to the generation log)
+AI_ERROR_MESSAGES = {
+    "auth": "AI generation isn't set up correctly right now (the AI service rejected our key). Please try again later.",
+    "quota": "The AI service is busy or has reached its free limit. Please try again in a few minutes.",
+    "timeout": "The AI service took too long to reply. Please try again; smaller tests are quicker.",
+    "unavailable": "The AI service is unavailable right now. Please try again in a few minutes.",
+    "bad_request": "The AI service rejected the request. Please try again later.",
+    "bad_response": "The AI returned an unusable reply. Please try again.",
+}
 
 
 def generate_test_code() -> str:
@@ -99,11 +117,59 @@ def generate_test(
     subjects = sorted(subjects_by_id.values(), key=lambda s: (s.sort_order, s.name))
     difficulties = [d for d in DIFFICULTY_ORDER if d in {x.value for x in test_data.difficulties}]
 
-    blueprint = build_blueprint(subjects, difficulties, test_data.num_questions)
-    result = get_generator().generate(db, blueprint)
+    settings = load_settings()
+    if settings.enabled:
+        quota = quota_status(db, current_user, settings)
+        blocked = quota.blocked_message()
+        if blocked:
+            return JSONResponse(status_code=429, content={
+                "status": 429,
+                "error": f"{blocked} You can generate more after {quota.resets_at:%H:%M} UTC.",
+                "code": "quota",
+                "retry_at": quota.resets_at.isoformat(),
+            })
 
+    blueprint = build_blueprint(subjects, difficulties, test_data.num_questions)
+    started = time.monotonic()
+
+    def log(status: str, result=None, error_detail: str | None = None, calls: int = 0) -> models.GenerationLog:
+        entry = models.GenerationLog(
+            user_id=current_user.id,
+            source="ai" if settings.enabled else "bank",
+            status=status,
+            requested_count=test_data.num_questions,
+            question_count=len(result.questions) if result else 0,
+            provider=settings.provider if settings.enabled else None,
+            model=settings.model if settings.enabled else None,
+            calls=result.calls if result else calls,
+            duration_ms=int((time.monotonic() - started) * 1000),
+            error=error_detail,
+        )
+        db.add(entry)
+        return entry
+
+    try:
+        result = get_generator(settings).generate(db, blueprint)
+    except AIError as e:
+        log("failed", error_detail=f"{e.kind}: {e.detail}", calls=e.calls)
+        db.commit()
+        return JSONResponse(status_code=502, content={
+            "status": 502, "error": AI_ERROR_MESSAGES.get(e.kind, AI_ERROR_MESSAGES["unavailable"]), "code": e.kind,
+        })
+
+    errors_detail = "\n".join(result.errors)[:4000] or None
     if not result.questions:
+        if result.source == "ai":
+            log("failed", result, errors_detail or "no usable questions")
+            db.commit()
+            return error(502, AI_ERROR_MESSAGES["bad_response"])
         return error(400, "No questions are available for the chosen subjects and difficulties")
+
+    if result.source == "ai" and len(result.questions) < math.ceil(test_data.num_questions * MIN_AI_SHARE):
+        log("failed", result, errors_detail)
+        db.commit()
+        return error(502, f"Only {len(result.questions)} of {test_data.num_questions} questions could be generated, "
+                          "so the test wasn't saved. Please try again.")
 
     questions_data = [
         {
@@ -136,6 +202,8 @@ def generate_test(
         user_id=current_user.id
     )
     db.add(db_test)
+    # The test and its log entry are saved together; nothing is saved if generation failed
+    log("partial" if result.shortfalls else "success", result, errors_detail)
     db.commit()
     db.refresh(db_test)
 
@@ -146,6 +214,27 @@ def generate_test(
         requested_questions=test_data.num_questions,
         question_count=len(questions_data),
         shortfalls=[schemas.TestShortfall(**vars(s)) for s in result.shortfalls],
+        source=result.source,
+    )
+
+
+# AI generation quota for the current creator (shown on the Create Test page)
+@router.get("/generation-quota", response_model=schemas.GenerationQuota)
+def get_generation_quota(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_creator_or_admin)
+):
+    settings = load_settings()
+    if not settings.enabled:
+        return schemas.GenerationQuota(ai_enabled=False)
+    quota = quota_status(db, current_user, settings)
+    return schemas.GenerationQuota(
+        ai_enabled=True,
+        used=quota.used,
+        limit=quota.limit,
+        remaining=quota.remaining,
+        resets_at=quota.resets_at,
+        blocked_message=quota.blocked_message(),
     )
 
 

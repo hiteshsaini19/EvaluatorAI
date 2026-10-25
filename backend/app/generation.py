@@ -42,6 +42,9 @@ class Shortfall:
 class GenerationResult:
     questions: List[GeneratedQuestion] = field(default_factory=list)
     shortfalls: List[Shortfall] = field(default_factory=list)
+    source: str = "bank"  # bank / ai
+    calls: int = 0  # AI requests made
+    errors: List[str] = field(default_factory=list)  # Internal details of failed AI requests
 
 
 def split_evenly(total: int, parts: int, start: int = 0) -> List[int]:
@@ -112,5 +115,10 @@ class BankGenerator:
         return result
 
 
-def get_generator() -> Generator:
-    return BankGenerator()
+def get_generator(settings=None) -> Generator:
+    # The AI generator is used once an API key is configured; until then tests come from the bank
+    from app.ai.generator import AIGenerator
+    from app.ai.settings import load_settings
+
+    settings = settings or load_settings()
+    return AIGenerator(settings) if settings.enabled else BankGenerator()
