@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { isAuthenticated, getUserRole } from '@/lib/auth';
+import { isAuthenticated } from '@/lib/auth';
 import { getTests, deleteTest } from '@/lib/api';
 import { TestBuilder } from '@/components/TestBuilder';
 import TopNav from '@/components/TopNav';
@@ -34,7 +34,6 @@ export default function TestsPage() {
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<'list' | 'create' | 'preview'>('list');
   const [selectedTest, setSelectedTest] = useState<Test | null>(null);
-  const [userRole, setUserRole] = useState<string | null>(null);
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
 
   useEffect(() => {
@@ -43,7 +42,6 @@ export default function TestsPage() {
       router.push('/login');
       return;
     }
-    setUserRole(getUserRole());
     if (view === 'list') {
       fetchTests();
     }
@@ -85,7 +83,6 @@ export default function TestsPage() {
   }, 2000);
 };
 
-  const isCreator = userRole === 'Creator';
 
   if (view === 'create') {
     return (

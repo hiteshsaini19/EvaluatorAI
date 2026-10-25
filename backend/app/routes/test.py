@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import Optional, List
 from app import models, schemas
@@ -13,48 +13,6 @@ router = APIRouter(prefix="/tests", tags=["Tests"])
 def generate_test_code() -> str:
     # Generate a unique test code using UUID
     return f"TEST-{uuid.uuid4().hex[:8].upper()}"
-
-
-# Get questions for test creation (unchanged - still useful for fetching questions)
-@router.get("/questions", response_model=list[schemas.QuestionResponse])
-def get_test_questions(
-    category_id: int = Query(..., description="Category ID (required)"),
-    difficulty: schemas.DifficultyEnum = Query(..., description="Difficulty level: Easy, Medium, or Hard"),
-    # sub_category_id removed
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
-):
-
-    # Get questions for test creation based on category, subcategory (optional), and difficulty
-    
-    # **category_id**: Required - The category to fetch questions from
-    # **difficulty**: Required - Easy, Medium, or Hard
-    # **sub_category_id**: Optional - If provided, fetches from specific subcategory, otherwise from entire category
-    
-    # Returns all matching questions
-    
-    # Validate category exists
-    category = db.query(models.Category).filter(
-        models.Category.id == category_id
-    ).first()
-    
-    if not category:
-        raise HTTPException(status_code=404, detail="Category not found")
-    
-    # Build base query
-    query = db.query(models.Question).filter(
-        models.Question.category_id == category_id,
-        models.Question.difficulty == difficulty.value
-    )
-    
-    # Execute query
-    questions = query.all()
-    
-    # Convert options from JSON string to dict for each question
-    for question in questions:
-        question.options = json.loads(question.options)
-    
-    return questions
 
 
 # Create Test - NEW IMPLEMENTATION
@@ -221,7 +179,11 @@ def get_test_by_code(
     
     if not db_test:
         raise HTTPException(status_code=404, detail="Test not found")
-    
+
+    # Contains correct answers, so only the owner or an Admin may view it
+    if current_user.role.role_name != "Admin" and db_test.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Test not found")
+
     # Convert questions_data from JSON to list
     questions_data = json.loads(db_test.questions_data)
     

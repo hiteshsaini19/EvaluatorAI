@@ -27,33 +27,29 @@ class User(Base):
     # Relationship (Access roles)
     role = relationship("Role", backref = "users")
 
-    # categories = relationship("Category", back_populates="creator")
-    # questions = relationship("Question", back_populates="creator")
 
-# Category Table
-class Category(Base):
-    __tablename__ = "categories"
+# Subject Table (fixed catalogue, seeded from app/data/subjects.py)
+class Subject(Base):
+    __tablename__ = "subjects"
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(150), nullable=False)
-    parent_category = Column(String(150), nullable=True)
-    description = Column(Text, nullable=True)
-    # question_count removed
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    slug = Column(String(100), unique=True, nullable=False)
+    name = Column(String(150), unique=True, nullable=False)
+    group_name = Column(String(100), nullable=False)
+    scope = Column(Text, nullable=False)  # Topics covered, used in the AI prompt
+    easy_rubric = Column(Text, nullable=False)
+    medium_rubric = Column(Text, nullable=False)
+    hard_rubric = Column(Text, nullable=False)
+    sort_order = Column(Integer, nullable=False, default=0)
+    is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
-    
-    # Relationships
-    creator = relationship("User", backref="categories")
-    
-    # sub_categories = relationship("Subcategory", backref="category", cascade="all, delete", passive_deletes=True)
 
-# Questions Table
+# Questions Table (example question bank)
 class Question(Base):
     __tablename__ = "questions"
-    
+
     id = Column(Integer, primary_key=True, index=True)
-    category_id = Column(Integer, ForeignKey("categories.id", ondelete="CASCADE"))
-    # sub_category_id removed
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="SET NULL"), nullable=True)  # NULL = Unassigned
     question_text = Column(Text, nullable=False)
     options = Column(Text, nullable=False)  # Stored as JSON string
     correct_option = Column(String(1), nullable=False)  # Single character: 'a', 'b', 'c', 'd'
@@ -61,12 +57,8 @@ class Question(Base):
     user_id = Column(Integer, ForeignKey("users.id")) # Foreign key for connecting with user.id
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
 
-    category = relationship("Category")
+    subject = relationship("Subject")
     creator = relationship("User", backref="questions")
-
-    @property
-    def category_name(self):
-        return self.category.name if self.category else "Unknown"
 
 # Test Table
 class Test(Base):

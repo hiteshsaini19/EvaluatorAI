@@ -4,23 +4,19 @@ import { useState, useEffect, useMemo } from 'react';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { getCategories, getQuestions, createTest } from '@/lib/api';
-import { Loader2, Trash2, Save, ArrowLeft, ChevronDown, ChevronRight, Database, RefreshCw } from 'lucide-react';
+import { getSubjects, getQuestions, createTest } from '@/lib/api';
+import { Subject } from '@/lib/subjects';
+import { Loader2, ChevronRight, RefreshCw } from 'lucide-react';
 
 interface Question {
     id: number;
     question_text: string;
-    category_name: string;
+    subject_id: number | null;
+    subject_name: string;
+    subject_group: string | null;
     difficulty: string;
     options: any;
     correct_option: string;
-    category_id: number;
-}
-
-interface Category {
-    id: number;
-    name: string;
-    parent_category: string | null;
 }
 
 interface TestBuilderProps {
@@ -29,7 +25,7 @@ interface TestBuilderProps {
 }
 
 export function TestBuilder({ onCancel, onSuccess }: TestBuilderProps) {
-    const [categories, setCategories] = useState<Category[]>([]);
+    const [subjects, setSubjects] = useState<Subject[]>([]);
     const [questions, setQuestions] = useState<Question[]>([]);
     const [loading, setLoading] = useState(true);
     const [selectedQuestions, setSelectedQuestions] = useState<Question[]>([]);
@@ -51,12 +47,13 @@ export function TestBuilder({ onCancel, onSuccess }: TestBuilderProps) {
     const init = async () => {
         try {
             setLoading(true);
-            const [catRes, qRes] = await Promise.all([
-                getCategories(),
+            const [subjectRes, qRes] = await Promise.all([
+                getSubjects(),
                 getQuestions(1, 1000)
             ]);
-            setCategories(catRes.data);
-            setQuestions(qRes.data.items);
+            setSubjects(subjectRes.data);
+            // Unassigned questions (no subject) can't go into a test
+            setQuestions(qRes.data.items.filter((q: Question) => q.subject_id !== null));
             setLoading(false);
         } catch (err) {
             console.error(err);
@@ -64,64 +61,42 @@ export function TestBuilder({ onCancel, onSuccess }: TestBuilderProps) {
         }
     };
 
-    const derivedParents = useMemo(() => {
-        const parents = new Set<string>();
-        // 1. Explicit parents
-        categories.filter(c => !c.parent_category || c.parent_category === 'Main Category').forEach(c => parents.add(c.name));
-        // 2. Implicit parents from children
-        categories.forEach(c => {
-            if (c.parent_category && c.parent_category !== 'Main Category') {
-                parents.add(c.parent_category);
-            }
-        });
-        return Array.from(parents).sort();
-    }, [categories]);
+    // Subject groups in catalogue order (e.g. Aptitude, CS Fundamentals, ...)
+    const derivedParents = useMemo(
+        () => Array.from(new Set(subjects.map(s => s.group_name))),
+        [subjects]
+    );
 
-    // Helper to find parent for a question
-    const getParentName = (q: Question) => {
-        const catObj = categories.find(c => c.name === q.category_name);
-        if (catObj?.parent_category && catObj.parent_category !== 'Main Category') {
-            return catObj.parent_category;
-        }
-        // It is a root category itself
-        return q.category_name;
-    };
-
-    // Group Questions by Parent -> Subcategory (or Direct)
+    // Group Questions by Subject group -> Subject, keeping catalogue order
     const groupedData = useMemo(() => {
         const data: Record<string, {
             total: number,
             subcats: Record<string, Question[]>,
-            direct: Question[]
         }> = {};
 
-        derivedParents.forEach(p => {
-            data[p] = { total: 0, subcats: {}, direct: [] };
+        derivedParents.forEach(group => {
+            data[group] = { total: 0, subcats: {} };
+            subjects.filter(s => s.group_name === group).forEach(s => {
+                data[group].subcats[s.name] = [];
+            });
         });
 
         questions.forEach(q => {
-            const parent = getParentName(q);
-            if (!data[parent]) {
-                // Should be in derivedParents, but just in case
-                data[parent] = { total: 0, subcats: {}, direct: [] };
-            }
+            const group = q.subject_group as string;
+            if (!data[group]) return;
+            data[group].total++;
+            (data[group].subcats[q.subject_name] ??= []).push(q);
+        });
 
-            data[parent].total++;
-
-            // Is it in a subcategory?
-            // If category_name != parent, then category_name is the subcategory
-            if (q.category_name !== parent) {
-                if (!data[parent].subcats[q.category_name]) {
-                    data[parent].subcats[q.category_name] = [];
-                }
-                data[parent].subcats[q.category_name].push(q);
-            } else {
-                data[parent].direct.push(q);
-            }
+        // Hide subjects that have no questions
+        Object.values(data).forEach(group => {
+            Object.keys(group.subcats).forEach(name => {
+                if (group.subcats[name].length === 0) delete group.subcats[name];
+            });
         });
 
         return data;
-    }, [questions, derivedParents, categories]);
+    }, [questions, derivedParents, subjects]);
 
     const toggleQuestion = (q: Question) => {
         if (selectedQuestions.find(sq => sq.id === q.id)) {
@@ -168,10 +143,11 @@ export function TestBuilder({ onCancel, onSuccess }: TestBuilderProps) {
                         question_id: q.id,
                         answer: q.correct_option,
                         options: q.options,
-                        category: { id: q.category_id, name: q.category_name },
+                        // Snapshot keeps the "category" key; it now holds the subject
+                        category: { id: q.subject_id as number, name: q.subject_name },
                         question: q.question_text,
                         difficulty: q.difficulty,
-                        user_id: 1 // Default fallback
+                        user_id: 1 // Not used by the backend; the test owner comes from the login token
                     };
                 })
 
@@ -234,7 +210,31 @@ export function TestBuilder({ onCancel, onSuccess }: TestBuilderProps) {
                                 {isExpanded && (
                                     <div className="border-t bg-gray-50/30 p-3">
 
-                                        {/* Subcategories */}
+                                        {/* Difficulty filter (applies to every subject in this group) */}
+                                        <div className="flex items-center gap-2 mb-3">
+                                            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Select Difficulty:</span>
+                                            {['ALL', 'Easy', 'Medium', 'Hard'].map(d => (
+                                                <button
+                                                    key={d}
+                                                    onClick={(e) => { e.stopPropagation(); setDifficulty(parent, d); }}
+                                                    className={`text-[10px] px-2 py-1 rounded border font-medium transition-colors ${
+                                                        currentDifficulty === d
+                                                            ? d === 'ALL'
+                                                                ? 'bg-blue-100 text-blue-800 border-blue-300 ring-1 ring-blue-300'
+                                                                : d === 'Easy'
+                                                                ? 'bg-green-100 text-green-800 border-green-300 ring-1 ring-green-300'
+                                                                : d === 'Medium'
+                                                                ? 'bg-yellow-100 text-yellow-800 border-yellow-300 ring-1 ring-yellow-300'
+                                                                : 'bg-red-100 text-red-800 border-red-300 ring-1 ring-red-300'
+                                                            : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-100'
+                                                    }`}
+                                                >
+                                                    {d.toUpperCase()}
+                                                </button>
+                                            ))}
+                                        </div>
+
+                                        {/* Subjects */}
                                         {Object.keys(group.subcats).map(subcat => {
                                             const subQs = group.subcats[subcat].filter(q => currentDifficulty === 'ALL' || q.difficulty === currentDifficulty);
                                             const subExpanded = expandedSubcats.has(subcat);
@@ -270,44 +270,6 @@ export function TestBuilder({ onCancel, onSuccess }: TestBuilderProps) {
                                                 </div>
                                             );
                                         })}
-
-                                        {/* Direct Questions AND Difficulty Filter (Apply to whole parent block really, but shown here) */}
-                                        <div className="mt-4 mb-2">
-                                            <div className="flex items-center gap-2 mb-3">
-                                                <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Select Difficulty:</span>
-                                                {['ALL', 'Easy', 'Medium', 'Hard'].map(d => (
-                                                    <button
-                                                        key={d}
-                                                        onClick={(e) => { e.stopPropagation(); setDifficulty(parent, d); }}
-                                                        className={`text-[10px] px-2 py-1 rounded border font-medium transition-colors ${
-                                                            currentDifficulty === d
-                                                                ? d === 'ALL'
-                                                                    ? 'bg-blue-100 text-blue-800 border-blue-300 ring-1 ring-blue-300'
-                                                                    : d === 'Easy'
-                                                                    ? 'bg-green-100 text-green-800 border-green-300 ring-1 ring-green-300'
-                                                                    : d === 'Medium'
-                                                                    ? 'bg-yellow-100 text-yellow-800 border-yellow-300 ring-1 ring-yellow-300'
-                                                                    : 'bg-red-100 text-red-800 border-red-300 ring-1 ring-red-300'
-                                                                : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-100'
-                                                        }`}
-                                                    >
-                                                        {d.toUpperCase()}
-                                                    </button>
-                                                ))}
-                                            </div>
-
-                                            {/* Direct Questions List */}
-                                            <div className="space-y-2">
-                                                {group.direct.filter(q => currentDifficulty === 'ALL' || q.difficulty === currentDifficulty).map(q => (
-                                                    <QuestionItem
-                                                        key={q.id}
-                                                        q={q}
-                                                        selected={!!selectedQuestions.find(sq => sq.id === q.id)}
-                                                        onToggle={() => toggleQuestion(q)}
-                                                    />
-                                                ))}
-                                            </div>
-                                        </div>
 
                                     </div>
                                 )}
@@ -348,7 +310,7 @@ export function TestBuilder({ onCancel, onSuccess }: TestBuilderProps) {
                                 <div className="max-h-[300px] overflow-y-auto pr-1 space-y-2 custom-scroll">
                                     {selectedQuestions.map(q => (
                                         <div key={q.id} className="group relative bg-white p-2 rounded border hover:shadow-sm transition-shadow text-xs">
-                                            <div className="font-semibold text-gray-800 mb-1">{q.category_name}</div>
+                                            <div className="font-semibold text-gray-800 mb-1">{q.subject_name}</div>
                                             <div className="text-gray-600 line-clamp-2 pr-6" title={q.question_text}>{q.question_text}</div>
                                             <button
                                                 onClick={() => toggleQuestion(q)}

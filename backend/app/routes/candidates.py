@@ -10,6 +10,15 @@ import json
 router = APIRouter(prefix="/candidates", tags=["Candidates"])
 
 
+def is_admin(user: models.User) -> bool:
+    return user.role.role_name == "Admin"
+
+
+def owns_test(user: models.User, test: models.Test) -> bool:
+    # Admin can access every test; Creators only their own
+    return is_admin(user) or test.user_id == user.id
+
+
 def format_time(seconds: int) -> str:
     if seconds < 60:
         return f"{seconds}s"
@@ -214,7 +223,10 @@ def get_candidate_result(
         models.Response.id == response_id
     ).first()
 
-    if not response:
+    # Get test (404 rather than 403 for other creators' results, so IDs aren't confirmed to exist)
+    test = db.query(models.Test).filter(models.Test.id == response.test_id).first() if response else None
+
+    if not response or not test or not owns_test(current_user, test):
         return JSONResponse(
             status_code=404,
             content={
@@ -237,8 +249,7 @@ def get_candidate_result(
             }
         )
 
-    # Get test and questions data
-    test = db.query(models.Test).filter(models.Test.id == response.test_id).first()
+    # Get questions data
     questions_data = json.loads(test.questions_data)
     questions_map = {str(q["question_id"]): q for q in questions_data}
 
@@ -299,13 +310,19 @@ def get_all_results(
     # Query responses instead of candidates
     query = db.query(models.Response)
 
+    # Creators only see results for their own tests
+    if not is_admin(current_user):
+        query = query.join(models.Test, models.Response.test_id == models.Test.id).filter(
+            models.Test.user_id == current_user.id
+        )
+
     # Apply test_code filter if provided
     if test_code:
         test = db.query(models.Test).filter(
             models.Test.test_code == test_code
         ).first()
 
-        if not test:
+        if not test or not owns_test(current_user, test):
             return JSONResponse(
                 status_code=404,
                 content={
@@ -381,19 +398,21 @@ def delete_candidate(
 
     return {"message": "Candidate and their responses deleted successfully"}
 
-# DELETE RESPONSE BY ID (Admin Only)
+# DELETE RESPONSE BY ID (Owner of the test or Admin)
 @router.delete("/response/{response_id}")
 def delete_response(
     response_id: int,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_admin)
+    current_user: models.User = Depends(require_creator_or_admin)
 ):
 
     response = db.query(models.Response).filter(
         models.Response.id == response_id
     ).first()
 
-    if not response:
+    test = db.query(models.Test).filter(models.Test.id == response.test_id).first() if response else None
+
+    if not response or not test or not owns_test(current_user, test):
         return JSONResponse(
             status_code=404,
             content={

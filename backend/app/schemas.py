@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, Field, EmailStr, field_validator
 from datetime import datetime
 from typing import Optional, Dict, List
 import json
@@ -8,6 +8,26 @@ from enum import Enum
 class UserLogin(BaseModel):
     email: str = Field(..., min_length=1, description="User email address")
     password: str = Field(..., min_length=1, description="User password")
+
+# Public sign-up Schema (always creates a Creator)
+class UserSignup(BaseModel):
+    name: str = Field(..., min_length=1, max_length=150, description="Full name")
+    email: EmailStr
+    # bcrypt only uses the first 72 bytes, so cap the length
+    password: str = Field(..., min_length=8, max_length=72, description="Password (8-72 characters)")
+
+    @field_validator("name")
+    @classmethod
+    def name_not_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("name cannot be empty")
+        return value
+
+    @field_validator("email")
+    @classmethod
+    def lowercase_email(cls, value: str) -> str:
+        return value.lower()
 
 # Token Response
 class Token(BaseModel):
@@ -55,25 +75,18 @@ class UserResponse(UserBase):
         from_attributes = True
 
 
-# Category Schemas
-class CategoryBase(BaseModel):
-    name: str
-    parent_category: Optional[str] = None
-    description: Optional[str] = None
-
-class CategoryCreate(CategoryBase):
-    pass
-
-class CategoryUpdate(BaseModel):
-    name: Optional[str] = None
-    parent_category: Optional[str] = None
-    description: Optional[str] = None
-
-class CategoryResponse(CategoryBase):
+# Subject Schemas
+class SubjectResponse(BaseModel):
     id: int
-    user_id: int
-    created_at: datetime
-    question_count: Optional[int] = 0
+    slug: str
+    name: str
+    group_name: str
+    scope: str
+    easy_rubric: str
+    medium_rubric: str
+    hard_rubric: str
+    sort_order: int
+    question_count: int = 0
 
     class Config:
         from_attributes = True
@@ -88,7 +101,7 @@ class DifficultyEnum(str, Enum):
 
 # Question Schemas
 class QuestionBase(BaseModel):
-    category_id: int
+    subject_id: int
     question_text: str
     options: Dict[str, str]  # Example: {"a": "Option A", "b": "Option B", "c": "Option C", "d": "Option D"}
     correct_option: str  # Single character: 'a', 'b', 'c', or 'd'
@@ -100,8 +113,7 @@ class QuestionCreate(QuestionBase):
 
 
 class QuestionUpdate(BaseModel):
-    category_id: Optional[int] = None
-    # sub_category_id removed
+    subject_id: Optional[int] = None
     question_text: Optional[str] = None
     options: Optional[Dict[str, str]] = None
     correct_option: Optional[str] = None
@@ -109,15 +121,16 @@ class QuestionUpdate(BaseModel):
 
 class QuestionResponse(BaseModel):
     id: int
-    category_id: int
-    category_name: str
+    subject_id: Optional[int] = None  # None = Unassigned
+    subject_name: str
+    subject_group: Optional[str] = None
     question_text: str
     options: Dict[str, str]  # Will be converted from JSON string
     correct_option: str
     difficulty: str
-    user_id: int
+    user_id: Optional[int] = None
     created_at: datetime
-    
+
 
 class QuestionPaginatedResponse(BaseModel):
     items: List[Dict]

@@ -26,29 +26,7 @@ export const saveUser = (user: unknown) => {
   }
 };
 
-export const getUserName = (): string | null => {
-  if (typeof window === 'undefined') return null;
-  const userStr = localStorage.getItem('user');
-  if (!userStr) return null;
-  try {
-    return JSON.parse(userStr).name || null;
-  } catch (e) {
-    return null;
-  }
-};
-
 export const isAuthenticated = (): boolean => {
   return !!getToken();
 };
 
-export const getUserRole = (): string | null => {
-  if (typeof window === 'undefined') return null;
-  const userStr = localStorage.getItem('user');
-  if (!userStr) return null;
-  try {
-    const user = JSON.parse(userStr);
-    return user.role?.role_name || null;
-  } catch (e) {
-    return null;
-  }
-};

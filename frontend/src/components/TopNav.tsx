@@ -1,7 +1,9 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { removeToken } from '@/lib/auth';
+import { getCurrentUser, SessionUser } from '@/lib/session';
 import { Button } from '@/components/ui/button';
 import { LogOut } from 'lucide-react';
 
@@ -12,6 +14,11 @@ interface TopNavProps {
 
 export default function TopNav({ title, subtitle }: TopNavProps) {
   const router = useRouter();
+  const [user, setUser] = useState<SessionUser | null>(null);
+
+  useEffect(() => {
+    getCurrentUser().then(setUser);
+  }, []);
 
   const handleLogout = () => {
     removeToken();
@@ -24,10 +31,14 @@ export default function TopNav({ title, subtitle }: TopNavProps) {
         <h1 className="text-2xl font-bold text-gray-800">{title}</h1>
         {subtitle && <p className="text-sm text-gray-500 mt-1">{subtitle}</p>}
       </div>
-      
+
       <div className="flex items-center gap-4">
-        <div className="flex items-center gap-2">
-        </div>
+        {user && (
+          <div className="text-right leading-tight">
+            <div className="text-sm font-semibold text-gray-800">{user.name}</div>
+            <div className="text-xs text-gray-500">{user.role?.role_name}</div>
+          </div>
+        )}
         <Button
           onClick={handleLogout}
           variant="outline"

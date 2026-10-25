@@ -1,6 +1,8 @@
-# Candidate Evaluation Platform
+# EvaluatorAI
 
-An interview test platform. An admin builds a question bank by category, picks questions to create a test, and shares the test link with candidates. Candidates take the test in the browser, and answers are scored automatically for the admin to review.
+EvaluatorAI is an interview test platform. Test creators sign up, build a test from subjects in the catalogue, and share the test link with candidates. Candidates take the test in the browser, and answers are scored automatically for the creator to review.
+
+The platform is being turned into a free, public, AI-powered test generator in phases. See [PROJECT_PLAN.md](PROJECT_PLAN.md) for the plan and current status.
 
 ## Repository layout
 
@@ -12,10 +14,11 @@ render.yaml Render blueprint for the backend (rootDir: backend)
 
 ## Features
 
-- Admin / Creator roles with JWT login
-- Categories with sub-categories
-- Question bank: create, edit, delete, filter, CSV bulk import
-- Test builder: pick questions by category and difficulty; each test gets a unique `TEST-XXXXXXXX` code and link
+- Public sign-up for test creators (email + password), JWT login; Admin accounts come from `seed.py` only
+- Each creator sees only their own tests and results; Admin sees everything
+- Fixed catalogue of 24 subjects in 8 groups, each with a topic scope and Easy/Medium/Hard rubric (`backend/app/data/subjects.py`)
+- Example question bank (Admin): 144 starter questions, create, edit, delete, filter by group/subject/difficulty, search, CSV bulk import
+- Test builder: pick questions by subject and difficulty; each test gets a unique `TEST-XXXXXXXX` code and link
 - Candidate flow: name/email entry, timed test, question navigator, submit with auto-scoring
 - Results: list of all submissions and a per-question breakdown
 
@@ -46,7 +49,7 @@ ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=60
 ```
 
-Run migrations **before** the first server start (the app auto-creates missing tables on startup, which would make the first migration fail):
+The database schema is managed only by Alembic, so run the migrations before starting the server (and again after pulling changes that add migrations). Then seed:
 
 ```powershell
 .\venv\Scripts\alembic upgrade head
@@ -56,7 +59,7 @@ Run migrations **before** the first server start (the app auto-creates missing t
 
 API docs: http://localhost:8000/docs
 
-`seed.py` creates two demo users (change these before any real deployment):
+`seed.py` is safe to re-run. It creates the roles, the subject catalogue (updating scopes and rubrics when `subjects.py` changes), the starter example questions (`backend/app/data/example_questions.py`, skipping ones already present) and two demo users (change these before any real deployment):
 
 | Role | Email | Password |
 |---|---|---|

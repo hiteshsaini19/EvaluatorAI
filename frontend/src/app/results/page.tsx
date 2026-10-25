@@ -3,7 +3,6 @@
 
 import { useEffect, useState } from 'react';
 import { getResults, deleteResult } from '@/lib/api';
-import { getUserRole } from '@/lib/auth';
 import {
   Table,
   TableBody,
@@ -32,15 +31,11 @@ export default function ResultsPage() {
   const [results, setResults] = useState<Result[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [userRole, setUserRole] = useState<string | null>(null);
 
+  // The backend only returns results for the user's own tests (Admin: all), and owners may delete them
   useEffect(() => {
-    setUserRole(getUserRole());
     fetchResults();
   }, []);
-
-  // Only Admin can delete results
-  const isCreator = userRole === 'Creator';
 
   const fetchResults = async () => {
     try {
@@ -170,14 +165,12 @@ export default function ResultsPage() {
                         >
                           View
                         </Link>
-                        {!isCreator && (
-                          <button
-                            onClick={() => handleDelete(r.id)}
-                            className="text-red-500 hover:text-red-700 text-[13px] font-bold transition-colors"
-                          >
-                            Delete
-                          </button>
-                        )}
+                        <button
+                          onClick={() => handleDelete(r.id)}
+                          className="text-red-500 hover:text-red-700 text-[13px] font-bold transition-colors"
+                        >
+                          Delete
+                        </button>
                       </div>
                     </TableCell>
                   </TableRow>

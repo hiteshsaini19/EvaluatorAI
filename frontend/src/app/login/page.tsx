@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -119,6 +120,13 @@ export default function LoginPage() {
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? 'Logging in...' : 'Login'}
             </Button>
+
+            <p className="text-center text-sm text-gray-600">
+              New here?{' '}
+              <Link href="/signup" className="font-semibold text-indigo-600 hover:text-indigo-800">
+                Create an account
+              </Link>
+            </p>
           </form>
         </CardContent>
       </Card>

@@ -25,8 +25,9 @@ export default function RootLayout({
   }, [pathname]);
 
   const isCandidatePage = pathname?.startsWith('/candidate');
-  // Don't show sidebar on login page or candidate pages
-  const showSidebar = mounted && isLoggedIn && pathname !== '/login' && !isCandidatePage;
+  const isAuthPage = pathname === '/login' || pathname === '/signup';
+  // Don't show sidebar on login/sign-up pages, candidate pages, or the public landing page (logged out)
+  const showSidebar = mounted && isLoggedIn && !isAuthPage && !isCandidatePage;
 
   return (
     <html lang="en">

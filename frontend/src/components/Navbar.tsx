@@ -34,7 +34,7 @@ export default function Navbar() {
     return (
       <nav className="bg-blue-600 text-white p-4 shadow-lg">
         <div className="container mx-auto flex gap-6 items-center justify-between">
-          <div className="font-bold text-xl">Interview Platform</div>
+          <div className="font-bold text-xl">EvaluatorAI</div>
         </div>
       </nav>
     );
@@ -45,7 +45,7 @@ export default function Navbar() {
       <div className="container mx-auto flex gap-6 items-center justify-between">
         <div className="flex gap-6 items-center">
           <Link href="/" className="font-bold text-xl hover:text-blue-200">
-            Interview Platform
+            EvaluatorAI
           </Link>
           
           {isLoggedIn && (

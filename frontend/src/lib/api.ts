@@ -51,35 +51,17 @@ api.interceptors.response.use(
 export const login = (email: string, password: string) =>
   api.post('/auth/login', { email, password });
 
+export const signup = (data: { name: string; email: string; password: string }) =>
+  api.post('/auth/signup', data);
+
 export const getMe = () => api.get('/auth/me');
 
-export const getCategories = () =>
-  api.get('/categories/');
-
-export const createCategory = (data: {
-  name: string;
-  description?: string;
-  parent_category?: string | null;
-}) =>
-  api.post('/categories/', data);
-
-export const updateCategory = (
-  id: number,
-  data: {
-    name?: string;
-    description?: string;
-    parent_category?: string | null;
-  }
-) =>
-  api.put(`/categories/${id}`, data);
-
-export const deleteCategory = (id: number) =>
-  api.delete(`/categories/${id}`);
+export const getSubjects = () => api.get('/subjects/');
 
 export const getQuestions = (
   page: number = 1,
   per_page: number = 10,
-  filters: { category_id?: number; parent_category?: string; difficulty?: string; search?: string } = {}
+  filters: { subject_id?: number; group?: string; unassigned?: boolean; difficulty?: string; search?: string } = {}
 ) =>
   api.get('/questions/', { params: { page, per_page, ...filters } });
 

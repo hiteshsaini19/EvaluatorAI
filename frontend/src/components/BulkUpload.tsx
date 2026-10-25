@@ -3,31 +3,29 @@
 import { useState, useRef } from 'react';
 import { Button } from "@/components/ui/button";
 import { createQuestion } from '@/lib/api';
+import { Subject } from '@/lib/subjects';
 import { AlertCircle, Upload, FileDown, CheckCircle } from 'lucide-react';
 
-interface Category {
-    id: number;
-    name: string;
-    parent_category: string | null;
-}
-
 interface BulkUploadProps {
-    categories: Category[];
+    subjects: Subject[];
     onUploadComplete: () => void;
 }
 
-export function BulkUpload({ categories, onUploadComplete }: BulkUploadProps) {
+const HEADERS = ['question_text', 'subject', 'difficulty', 'option_a', 'option_b', 'option_c', 'option_d', 'correct_answer'];
+const DIFFICULTIES = ['Easy', 'Medium', 'Hard'];
+const MAX_LISTED_ERRORS = 5;
+
+export function BulkUpload({ subjects, onUploadComplete }: BulkUploadProps) {
     const [loading, setLoading] = useState(false);
     const [status, setStatus] = useState<{ type: 'success' | 'error' | 'info', message: string } | null>(null);
+    const [rowErrors, setRowErrors] = useState<string[]>([]);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const handleDownloadTemplate = () => {
-        const headers = ['question_text', 'category_name', 'subcategory_name', 'difficulty_level', 'option_a', 'option_b', 'option_c', 'option_d', 'correct_answer'];
-        const sampleRow = ['What is SQL?', 'Database', 'SQL', 'Easy', 'Structured Query Language', 'Strong Question Language', 'Structured Question List', 'None', 'a'];
-        const csvContent = "data:text/csv;charset=utf-8," + [headers.join(','), sampleRow.join(',')].join('\n');
-        const encodedUri = encodeURI(csvContent);
+        const sampleRow = ['What does SQL stand for?', 'SQL', 'Easy', 'Structured Query Language', 'Simple Question Language', 'Sequential Query Logic', 'Standard Query List', 'a'];
+        const csvContent = "data:text/csv;charset=utf-8," + [HEADERS.join(','), sampleRow.join(',')].join('\n');
         const link = document.createElement("a");
-        link.setAttribute("href", encodedUri);
+        link.setAttribute("href", encodeURI(csvContent));
         link.setAttribute("download", "questions_template.csv");
         document.body.appendChild(link);
         link.click();
@@ -38,8 +36,8 @@ export function BulkUpload({ categories, onUploadComplete }: BulkUploadProps) {
         const lines = text.split('\n');
         if (lines.length < 2) return [];
 
-        const headers = lines[0].split(',').map(h => h.trim());
-        const result = [];
+        const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+        const result: { line: number; data: Record<string, string> }[] = [];
 
         // Simple CSV parser that handles basic quotes
         for (let i = 1; i < lines.length; i++) {
@@ -48,7 +46,6 @@ export function BulkUpload({ categories, onUploadComplete }: BulkUploadProps) {
 
             const row: string[] = [];
             let inQuote = false;
-            let p = 0;
             let start = 0;
 
             for (let j = 0; j < line.length; j++) {
@@ -61,16 +58,19 @@ export function BulkUpload({ categories, onUploadComplete }: BulkUploadProps) {
             }
             row.push(line.substring(start).replace(/^"|"$/g, '').trim()); // Last column
 
-            // Basic validation of row length against headers
-            if (row.length < 1) continue;
-
-            const obj: any = {};
+            const obj: Record<string, string> = {};
             headers.forEach((h, index) => {
                 if (row[index] !== undefined) obj[h] = row[index];
             });
-            result.push(obj);
+            result.push({ line: i + 1, data: obj });
         }
         return result;
+    };
+
+    const findSubject = (value: string | undefined) => {
+        const key = (value || '').trim().toLowerCase();
+        if (!key) return undefined;
+        return subjects.find(s => s.name.toLowerCase() === key || s.slug === key);
     };
 
     const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -78,79 +78,66 @@ export function BulkUpload({ categories, onUploadComplete }: BulkUploadProps) {
         if (!file) return;
 
         setStatus({ type: 'info', message: 'Parsing CSV...' });
+        setRowErrors([]);
         setLoading(true);
 
         const reader = new FileReader();
         reader.onload = async (e) => {
+            const errors: string[] = [];
             try {
                 const text = e.target?.result as string;
-                const data = parseCSV(text);
+                const rows = parseCSV(text);
 
-                if (data.length === 0) {
+                if (rows.length === 0) {
                     setStatus({ type: 'error', message: 'No valid data found in CSV.' });
                     setLoading(false);
                     return;
                 }
 
-                setStatus({ type: 'info', message: `Uploading ${data.length} questions...` });
+                setStatus({ type: 'info', message: `Uploading ${rows.length} questions...` });
 
                 let successCount = 0;
-                let failCount = 0;
 
-                for (const item of data) {
+                for (const { line, data: item } of rows) {
+                    const subject = findSubject(item.subject);
+                    if (!subject) {
+                        errors.push(`Row ${line}: unknown subject "${item.subject || ''}"`);
+                        continue;
+                    }
+
+                    const difficulty = DIFFICULTIES.find(d => d.toLowerCase() === (item.difficulty || 'medium').toLowerCase());
+                    if (!difficulty) {
+                        errors.push(`Row ${line}: difficulty must be Easy, Medium or Hard`);
+                        continue;
+                    }
+
+                    // Only send filled options (blank C/D columns are allowed)
+                    const options: Record<string, string> = {};
+                    (['a', 'b', 'c', 'd'] as const).forEach(key => {
+                        const value = item[`option_${key}`];
+                        if (value && value.trim()) options[key] = value.trim();
+                    });
+
                     try {
-                        // Logic: Find ID. item.subcategory_name takes precedence if exists.
-                        let targetId = -1;
-
-                        // 1. Try to find Exact Subcategory match
-                        if (item.subcategory_name) {
-                            const sub = categories.find(c =>
-                                c.name.toLowerCase() === item.subcategory_name.trim().toLowerCase() &&
-                                c.parent_category?.toLowerCase() === item.category_name.trim().toLowerCase()
-                            );
-                            if (sub) targetId = sub.id;
-                        }
-
-                        // 2. If failure, try finding Main Category
-                        if (targetId === -1 && item.category_name) {
-                            const main = categories.find(c => c.name.toLowerCase() === item.category_name.trim().toLowerCase());
-                            if (main) targetId = main.id;
-                        }
-
-                        if (targetId === -1) {
-                            console.warn(`Category not found for: ${item.category_name} / ${item.subcategory_name}`);
-                            failCount++;
-                            continue; // Skip execution for this item
-                        }
-
-                        // Only send filled options (blank C/D columns are allowed)
-                        const options: Record<string, string> = {};
-                        (['a', 'b', 'c', 'd'] as const).forEach(key => {
-                            const value = item[`option_${key}`];
-                            if (value && value.trim()) options[key] = value.trim();
-                        });
-
-                        // Construct payload
-                        const payload = {
-                            category_id: targetId,
+                        await createQuestion({
+                            subject_id: subject.id,
                             question_text: item.question_text,
                             options,
-                            correct_option: item.correct_answer.toLowerCase(),
-                            difficulty: item.difficulty_level || 'Medium' // Default to Medium if missing
-                        };
-
-                        await createQuestion(payload);
+                            correct_option: (item.correct_answer || '').trim().toLowerCase(),
+                            difficulty
+                        });
                         successCount++;
-                    } catch (err) {
-                        console.error(err);
-                        failCount++;
+                    } catch (err: any) {
+                        errors.push(`Row ${line}: ${err.response?.data?.error || 'failed to save'}`);
                     }
                 }
 
+                const failCount = rows.length - successCount;
+                setRowErrors(errors);
                 if (successCount > 0) {
                     setStatus({
-                        type: successCount === data.length ? 'success' : 'info',
-                        message: `Uploaded ${successCount}/${data.length} questions.` + (failCount > 0 ? ` (${failCount} failed)` : '')
+                        type: failCount === 0 ? 'success' : 'info',
+                        message: `Uploaded ${successCount}/${rows.length} questions.` + (failCount > 0 ? ` (${failCount} failed)` : '')
                     });
                     onUploadComplete();
                 } else {
@@ -169,14 +156,18 @@ export function BulkUpload({ categories, onUploadComplete }: BulkUploadProps) {
     };
 
     return (
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-6">
-            <div className="flex justify-between items-center mb-4">
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-6">
+            <div className="flex justify-between items-center mb-2">
                 <h3 className="text-lg font-semibold text-blue-900">Bulk Import Questions</h3>
                 <Button variant="outline" size="sm" onClick={handleDownloadTemplate} className="text-blue-700 border-blue-300 hover:bg-blue-100 bg-white">
                     <FileDown className="w-4 h-4 mr-2" />
                     Download Template
                 </Button>
             </div>
+            <p className="text-xs text-blue-800/80 mb-4">
+                Columns: {HEADERS.join(', ')}. The subject must match a subject name from the catalogue (case doesn&apos;t matter).
+                Options C and D are optional.
+            </p>
 
             <div className="flex items-center gap-4">
                 <input
@@ -188,7 +179,7 @@ export function BulkUpload({ categories, onUploadComplete }: BulkUploadProps) {
                 />
                 <Button
                     onClick={() => fileInputRef.current?.click()}
-                    disabled={loading}
+                    disabled={loading || subjects.length === 0}
                     className="bg-blue-600 hover:bg-blue-700 text-white"
                 >
                     {loading ? 'Uploading...' : 'Upload CSV'}
@@ -205,6 +196,15 @@ export function BulkUpload({ categories, onUploadComplete }: BulkUploadProps) {
                     </div>
                 )}
             </div>
+
+            {rowErrors.length > 0 && (
+                <ul className="mt-3 text-xs text-red-700 space-y-0.5 list-disc pl-5">
+                    {rowErrors.slice(0, MAX_LISTED_ERRORS).map(err => <li key={err}>{err}</li>)}
+                    {rowErrors.length > MAX_LISTED_ERRORS && (
+                        <li>...and {rowErrors.length - MAX_LISTED_ERRORS} more</li>
+                    )}
+                </ul>
+            )}
         </div>
     );
 }

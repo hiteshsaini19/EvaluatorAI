@@ -1,12 +1,12 @@
 'use client';
 
 import { useEffect, useState, useMemo } from 'react';
-import { useRouter } from 'next/navigation';
-import { isAuthenticated, getUserRole } from '@/lib/auth';
-import { getQuestions, getCategories, deleteQuestion, createQuestion, updateQuestion } from '@/lib/api';
+import { getQuestions, getSubjects, deleteQuestion, createQuestion, updateQuestion } from '@/lib/api';
+import { Subject, groupSubjects } from '@/lib/subjects';
+import { useAdminGuard } from '@/lib/useAdminGuard';
 import TopNav from '@/components/TopNav';
 import { BulkUpload } from '@/components/BulkUpload';
-import QuestionModal from '@/components/QuestionModal';
+import QuestionModal, { BankQuestion } from '@/components/QuestionModal';
 import {
   Table,
   TableBody,
@@ -17,124 +17,119 @@ import {
 } from "@/components/ui/table";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Search, Plus, Trash2, Edit2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Input } from "@/components/ui/input";
+import { Plus, Trash2, Edit2, Search } from 'lucide-react';
 import { Toaster, toast } from 'react-hot-toast';
 
-interface Question {
-  id: number;
-  question_text: string;
-  category_name: string;
-  subcategory_name: string | null;
-  difficulty: string;
-  correct_option: string;
-}
+const UNASSIGNED = '__unassigned__';
 
-interface Category {
-  id: number;
-  name: string;
-  parent_category: string | null;
-}
+const selectClass = "border rounded-md px-3 py-2 text-sm bg-white hover:border-gray-400 transition-colors cursor-pointer disabled:bg-gray-50 disabled:text-gray-400 focus:ring-2 focus:ring-indigo-100 outline-none";
 
 export default function QuestionsPage() {
-  const router = useRouter();
-  const [questions, setQuestions] = useState<Question[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
+  const isAdmin = useAdminGuard();
+  const [questions, setQuestions] = useState<BankQuestion[]>([]);
+  const [subjects, setSubjects] = useState<Subject[]>([]);
   const [loading, setLoading] = useState(true);
-  const [userRole, setUserRole] = useState<string | null>(null);
 
   // Pagination & Filters
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [totalItems, setTotalItems] = useState(0);
   const [perPage, setPerPage] = useState(10);
-  // Search removed
   const [difficulty, setDifficulty] = useState('all');
-  const [selectedCategory, setSelectedCategory] = useState('all');
-  const [selectedSubcategory, setSelectedSubcategory] = useState('all');
+  const [groupFilter, setGroupFilter] = useState('all');
+  const [subjectFilter, setSubjectFilter] = useState('all');
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
+  const [filtersReady, setFiltersReady] = useState(false);
 
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingQuestion, setEditingQuestion] = useState<Question | null>(null);
+  const [editingQuestion, setEditingQuestion] = useState<BankQuestion | null>(null);
+
+  // Load subjects, and apply ?subject=<id> (linked from the Subjects page) before the first fetch
+  useEffect(() => {
+    if (!isAdmin) return;
+    getSubjects()
+      .then(res => {
+        const list: Subject[] = res.data;
+        setSubjects(list);
+        const fromUrl = new URLSearchParams(window.location.search).get('subject');
+        const linked = list.find(s => String(s.id) === fromUrl);
+        if (linked) {
+          setGroupFilter(linked.group_name);
+          setSubjectFilter(String(linked.id));
+        }
+      })
+      .catch(err => console.error(err))
+      .finally(() => setFiltersReady(true));
+  }, [isAdmin]);
+
+  // Debounce the search box
+  useEffect(() => {
+    const id = setTimeout(() => {
+      setSearch(searchInput.trim());
+      setCurrentPage(1);
+    }, 300);
+    return () => clearTimeout(id);
+  }, [searchInput]);
 
   useEffect(() => {
-    // 1. Strict Auth Check
-    if (!isAuthenticated()) {
-      router.push('/login');
-      return;
-    }
-    setUserRole(getUserRole());
-
-    // 2. Fetch Data
+    if (!isAdmin || !filtersReady) return;
     fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [router, currentPage, perPage, difficulty, selectedCategory, selectedSubcategory]);
-  useEffect(() => {
-    fetchCategories();
-  }, []);
+  }, [isAdmin, filtersReady, currentPage, perPage, difficulty, groupFilter, subjectFilter, search]);
 
   const fetchData = async () => {
     try {
       setLoading(true);
-
-      let catId: number | undefined;
-      let parentCat: string | undefined;
-      if (selectedSubcategory !== 'all') {
-        const sub = categories.find(c => c.name === selectedSubcategory);
-        if (sub) catId = sub.id;
-      } else if (selectedCategory !== 'all') {
-        // Check if it is a root category (Main Category)
-        const root = categories.find(c => c.name === selectedCategory && (!c.parent_category || c.parent_category === 'Main Category'));
-        if (root) {
-          catId = root.id;
-        } else {
-          // Assume it defines a Parent Category Group
-          parentCat = selectedCategory;
-        }
-      }
       const filters = {
-        category_id: catId,
-        parent_category: parentCat,
-        difficulty: difficulty !== 'all' ? difficulty : undefined
+        unassigned: groupFilter === UNASSIGNED ? true : undefined,
+        subject_id: groupFilter !== UNASSIGNED && subjectFilter !== 'all' ? Number(subjectFilter) : undefined,
+        group: groupFilter !== UNASSIGNED && groupFilter !== 'all' && subjectFilter === 'all' ? groupFilter : undefined,
+        difficulty: difficulty !== 'all' ? difficulty : undefined,
+        search: search || undefined,
       };
       const res = await getQuestions(currentPage, perPage, filters);
 
       setQuestions(res.data.items);
-      setTotalPages(Math.ceil(res.data.total / perPage));
+      setTotalPages(Math.max(1, Math.ceil(res.data.total / perPage)));
       setTotalItems(res.data.total);
     } catch (err: any) {
       console.error(err);
-      if (err.response?.status === 401) router.push('/login');
+      toast.error(err.response?.data?.error || 'Failed to load questions');
     } finally {
       setLoading(false);
     }
   };
 
-  const fetchCategories = async () => {
-    try {
-      const res = await getCategories();
-      setCategories(res.data);
-    } catch (err) { console.error(err); }
+  const refreshAll = () => {
+    fetchData();
+    // Question counts per subject changed
+    getSubjects().then(res => setSubjects(res.data)).catch(() => {});
   };
 
-const handleDelete = async (id: number) => {
-  if (!confirm('Delete this question?')) return;
-  try {
-    await deleteQuestion(id);
-    toast.success('Question deleted successfully!'); // Add this
-    fetchData();
-  } catch (e) { 
-    toast.error('Failed to delete question'); // Add this
-  }
-};
+  const handleDelete = async (id: number) => {
+    if (!confirm('Delete this question?')) return;
+    try {
+      await deleteQuestion(id);
+      toast.success('Question deleted successfully!');
+      refreshAll();
+    } catch (e) {
+      toast.error('Failed to delete question');
+    }
+  };
 
   // Errors propagate to QuestionModal, which shows the message and stays open
   const handleSaveQuestion = async (data: any) => {
     if (editingQuestion) {
       await updateQuestion(editingQuestion.id, data);
+      toast.success('Question updated');
     } else {
       await createQuestion(data);
+      toast.success('Question created');
     }
-    fetchData(); // Refresh list
+    refreshAll();
     setIsModalOpen(false);
     setEditingQuestion(null);
   };
@@ -143,85 +138,73 @@ const handleDelete = async (id: number) => {
     setEditingQuestion(null);
     setIsModalOpen(true);
   };
-  const openEditModal = (q: Question) => {
+  const openEditModal = (q: BankQuestion) => {
     setEditingQuestion(q);
     setIsModalOpen(true);
   };
 
-  const derivedParents = useMemo(() => {
-    return Array.from(new Set([
-      ...categories.filter(c => !c.parent_category || c.parent_category === 'Main Category').map(c => c.name),
-      ...categories.map(c => c.parent_category).filter((p): p is string => !!p && p !== 'Main Category')
-    ])).sort();
-  }, [categories]);
-
-  const subCategories = useMemo(() => {
-    if (selectedCategory === 'all') return [];
-    // Show categories that have selectedCategory as parent OR are the category itself (if it's a root)
-    return categories.filter(c => {
-      if (c.parent_category === selectedCategory) return true;
-      if (c.name === selectedCategory && (!c.parent_category || c.parent_category === 'Main Category')) return true;
-      return false;
-    });
-  }, [categories, selectedCategory]);
-
-  const isCreator = userRole === 'Creator';
-
-  if (loading && questions.length === 0) return (
-    <>
-      <TopNav title="Questions" subtitle="Manage your question bank" />
-      <div className="p-8 text-center text-gray-500">Loading questions...</div>
-    </>
+  const groups = useMemo(() => groupSubjects(subjects), [subjects]);
+  const subjectsInGroup = useMemo(
+    () => groupFilter === 'all' ? subjects : subjects.filter(s => s.group_name === groupFilter),
+    [subjects, groupFilter]
   );
+
+  const changeFilter = (setter: (value: string) => void) => (value: string) => {
+    setter(value);
+    setCurrentPage(1);
+  };
+
+  if (!isAdmin) {
+    return <div className="flex justify-center items-center h-64 text-gray-600">Loading...</div>;
+  }
 
   return (
     <>
-      <TopNav title="Questions" subtitle="Manage your question bank" />
+      <TopNav title="Questions" subtitle="Manage the example question bank" />
       <Toaster position="top-right" />
       <div className="p-8">
 
         {/* Bulk Import Section */}
-        {!isCreator && (
-          <div className="mb-6">
-            <BulkUpload
-              categories={categories}
-              onUploadComplete={() => fetchData()}
-            />
-          </div>
-        )}
+        <div className="mb-6">
+          <BulkUpload
+            subjects={subjects}
+            onUploadComplete={refreshAll}
+          />
+        </div>
+
         {/* Filters & Actions Bar */}
         <div className="flex flex-col xl:flex-row gap-4 mb-6">
-          {/* Filters Group */}
           <div className="flex flex-col md:flex-row gap-3 flex-1">
-            <div className="flex flex-col gap-1.5 flex-1 min-w-[200px]">
-              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Category</label>
+            <div className="flex flex-col gap-1.5 flex-1 min-w-[180px]">
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Group</label>
               <select
-                className="border rounded-md px-3 py-2 text-sm bg-white hover:border-gray-400 transition-colors cursor-pointer focus:ring-2 focus:ring-indigo-100 outline-none"
-                value={selectedCategory}
-                onChange={(e) => { setSelectedCategory(e.target.value); setSelectedSubcategory('all'); }}
+                className={selectClass}
+                value={groupFilter}
+                onChange={(e) => { changeFilter(setGroupFilter)(e.target.value); setSubjectFilter('all'); }}
               >
-                <option value="all">All Categories</option>
-                {derivedParents.map(name => <option key={name} value={name}>{name}</option>)}
+                <option value="all">All Groups</option>
+                {groups.map(g => <option key={g.group} value={g.group}>{g.group}</option>)}
+                <option value={UNASSIGNED}>Unassigned (no subject)</option>
               </select>
             </div>
-            <div className="flex flex-col gap-1.5 flex-1 min-w-[200px]">
-              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Subcategory</label>
+            <div className="flex flex-col gap-1.5 flex-1 min-w-[180px]">
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Subject</label>
               <select
-                className="border rounded-md px-3 py-2 text-sm bg-white hover:border-gray-400 transition-colors cursor-pointer disabled:bg-gray-50 disabled:text-gray-400 focus:ring-2 focus:ring-indigo-100 outline-none"
-                value={selectedSubcategory}
-                onChange={(e) => setSelectedSubcategory(e.target.value)}
-                disabled={selectedCategory === 'all' || subCategories.length === 0}
+                className={selectClass}
+                value={subjectFilter}
+                onChange={(e) => changeFilter(setSubjectFilter)(e.target.value)}
+                disabled={groupFilter === UNASSIGNED}
               >
-                <option value="all">All Subcategories</option>
-                {subCategories.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                <option value="all">All Subjects</option>
+                {subjectsInGroup.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
             </div>
-            <div className="flex flex-col gap-1.5 flex-1 min-w-[150px]">
+            <div className="flex flex-col gap-1.5 flex-1 min-w-[140px]">
               <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Difficulty</label>
               <select
-                className="border rounded-md px-3 py-2 text-sm bg-white hover:border-gray-400 transition-colors cursor-pointer focus:ring-2 focus:ring-indigo-100 outline-none"
+                className={selectClass}
                 value={difficulty}
-                onChange={(e) => setDifficulty(e.target.value)}
+                onChange={(e) => changeFilter(setDifficulty)(e.target.value)}
               >
                 <option value="all">All Levels</option>
                 <option value="Easy">Easy</option>
@@ -229,17 +212,26 @@ const handleDelete = async (id: number) => {
                 <option value="Hard">Hard</option>
               </select>
             </div>
+            <div className="flex flex-col gap-1.5 flex-1 min-w-[200px]">
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Search</label>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
+                <Input
+                  value={searchInput}
+                  onChange={(e) => setSearchInput(e.target.value)}
+                  placeholder="Search question text"
+                  className="pl-9 h-[38px]"
+                />
+              </div>
+            </div>
           </div>
 
-          {/* Add Button */}
-          {!isCreator && (
-            <div className="flex items-end">
-              <Button className="bg-indigo-600 hover:bg-indigo-700 h-[38px]" onClick={openCreateModal}>
-                <Plus className="w-4 h-4 mr-2" />
-                New Question
-              </Button>
-            </div>
-          )}
+          <div className="flex items-end">
+            <Button className="bg-indigo-600 hover:bg-indigo-700 h-[38px]" onClick={openCreateModal}>
+              <Plus className="w-4 h-4 mr-2" />
+              New Question
+            </Button>
+          </div>
         </div>
 
         {/* Data Table */}
@@ -248,93 +240,89 @@ const handleDelete = async (id: number) => {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-[40%]">Question</TableHead>
-                  <TableHead>Category</TableHead>
+                  <TableHead className="w-[45%]">Question</TableHead>
+                  <TableHead>Subject</TableHead>
                   <TableHead>Difficulty</TableHead>
                   <TableHead>Answer</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {questions.length === 0 ? (
+                {loading && questions.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={5} className="text-center py-8 text-gray-500">Loading questions...</TableCell>
+                  </TableRow>
+                ) : questions.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={5} className="text-center py-8 text-gray-500">
                       No questions found matching your filters.
                     </TableCell>
                   </TableRow>
                 ) : (
-                  questions.map((q) => {
-                    // Find actual category object to determine Parent
-                    const catObj = categories.find(c => c.name === q.category_name);
-                    const parentName = catObj?.parent_category && catObj.parent_category !== 'Main Category'
-                      ? catObj.parent_category
-                      : null;
-
-                    return (
-                      <TableRow key={q.id}>
-                        <TableCell className="font-medium">
-                          <div className="line-clamp-2 text-gray-800" title={q.question_text}>
-                            {q.question_text}
-                          </div>
-                        </TableCell>
-                        <TableCell>
+                  questions.map((q) => (
+                    <TableRow key={q.id} className={loading ? 'opacity-60' : ''}>
+                      <TableCell className="font-medium">
+                        <div className="line-clamp-2 text-gray-800" title={q.question_text}>
+                          {q.question_text}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        {q.subject_id === null ? (
+                          <span className="inline-flex px-2 py-1 text-xs font-semibold rounded border bg-amber-50 text-amber-700 border-amber-200">
+                            Unassigned
+                          </span>
+                        ) : (
                           <div className="flex flex-col items-start gap-1">
-                            {/* Parent Category Card/Pill */}
-                            {parentName && (
-                              <span className="inline-flex px-2 py-0.5 text-[10px] font-bold tracking-wider uppercase text-gray-500 bg-gray-100/80 rounded border border-gray-200 mb-0.5">
-                                {parentName}
-                              </span>
-                            )}
-
-                            {/* Main Category/Subcategory Pill */}
-                            <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded border ${parentName ? 'bg-purple-50 text-purple-700 border-purple-100' : 'bg-blue-50 text-blue-700 border-blue-100'}`}>
-                              {q.category_name}
+                            <span className="inline-flex px-2 py-0.5 text-[10px] font-bold tracking-wider uppercase text-gray-500 bg-gray-100/80 rounded border border-gray-200">
+                              {q.subject_group}
+                            </span>
+                            <span className="inline-flex px-2 py-1 text-xs font-semibold rounded border bg-blue-50 text-blue-700 border-blue-100">
+                              {q.subject_name}
                             </span>
                           </div>
-                        </TableCell>
-                        <TableCell>
-                          <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full border ${q.difficulty === 'Easy' ? 'bg-green-50 text-green-700 border-green-200' :
-                            q.difficulty === 'Hard' ? 'bg-red-50 text-red-700 border-red-200' :
-                              'bg-yellow-50 text-yellow-700 border-yellow-200'
-                            }`}>
-                            {q.difficulty}
-                          </span>
-                        </TableCell>
-                        <TableCell>
-                          <span className="font-mono text-xs bg-gray-100 px-2 py-1 rounded border">
-                            {q.correct_option.toUpperCase()}
-                          </span>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex justify-end gap-2">
-                            <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-blue-600 hover:bg-blue-50" onClick={() => openEditModal(q)}>
-                              <Edit2 className="w-4 h-4" />
-                            </Button>
-                            {!isCreator && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-8 w-8 p-0 text-red-500 hover:bg-red-50"
-                                onClick={() => handleDelete(q.id)}
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </Button>
-                            )}
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full border ${q.difficulty === 'Easy' ? 'bg-green-50 text-green-700 border-green-200' :
+                          q.difficulty === 'Hard' ? 'bg-red-50 text-red-700 border-red-200' :
+                            'bg-yellow-50 text-yellow-700 border-yellow-200'
+                          }`}>
+                          {q.difficulty}
+                        </span>
+                      </TableCell>
+                      <TableCell>
+                        <span className="font-mono text-xs bg-gray-100 px-2 py-1 rounded border">
+                          {q.correct_option.toUpperCase()}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-2">
+                          <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-blue-600 hover:bg-blue-50" onClick={() => openEditModal(q)} aria-label="Edit question">
+                            <Edit2 className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 w-8 p-0 text-red-500 hover:bg-red-50"
+                            onClick={() => handleDelete(q.id)}
+                            aria-label="Delete question"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))
                 )}
               </TableBody>
             </Table>
           </CardContent>
         </Card>
 
-        {/* Detailed Pagination */}
+        {/* Pagination */}
         <div className="flex items-center justify-between mt-6 bg-white p-4 rounded-lg border shadow-sm">
           <div className="text-sm text-gray-500">
-            Showing <span className="font-medium">{(currentPage - 1) * perPage + 1}</span> to <span className="font-medium">{Math.min(currentPage * perPage, totalItems)}</span> of <span className="font-medium">{totalItems}</span> questions
+            Showing <span className="font-medium">{totalItems === 0 ? 0 : (currentPage - 1) * perPage + 1}</span> to <span className="font-medium">{Math.min(currentPage * perPage, totalItems)}</span> of <span className="font-medium">{totalItems}</span> questions
             <span className="ml-4 text-gray-400">|</span>
             <span className="ml-4">Per page:
               <select
@@ -359,34 +347,17 @@ const handleDelete = async (id: number) => {
             >
               Previous
             </Button>
-            {/* Better Pagination Logic */}
             {(() => {
-              const pages = [];
-              // Always show 1
-              if (totalPages > 0) { // Only add page 1 if there are any pages
-                pages.push(1);
-              }
+              const pages: (number | '...')[] = [];
+              if (totalPages > 0) pages.push(1);
               let start = Math.max(2, currentPage - 1);
               let end = Math.min(totalPages - 1, currentPage + 1);
-              // Adjust window if close to boundaries
-              if (currentPage <= 3) {
-                end = Math.min(totalPages - 1, 4);
-              }
-              if (currentPage >= totalPages - 2) {
-                start = Math.max(2, totalPages - 3);
-              }
-              if (start > 2) {
-                pages.push('...');
-              }
-              for (let i = start; i <= end; i++) {
-                pages.push(i);
-              }
-              if (end < totalPages - 1) {
-                pages.push('...');
-              }
-              if (totalPages > 1 && !pages.includes(totalPages)) { // Add totalPages if not already included and totalPages > 1
-                pages.push(totalPages);
-              }
+              if (currentPage <= 3) end = Math.min(totalPages - 1, 4);
+              if (currentPage >= totalPages - 2) start = Math.max(2, totalPages - 3);
+              if (start > 2) pages.push('...');
+              for (let i = start; i <= end; i++) pages.push(i);
+              if (end < totalPages - 1) pages.push('...');
+              if (totalPages > 1 && !pages.includes(totalPages)) pages.push(totalPages);
               return pages.map((p, idx) => (
                 p === '...' ? (
                   <span key={`dots-${idx}`} className="flex items-center justify-center w-9 h-9 text-gray-400">...</span>
@@ -396,14 +367,13 @@ const handleDelete = async (id: number) => {
                     variant={currentPage === p ? "default" : "outline"}
                     size="sm"
                     className={`w-9 h-9 p-0 ${currentPage === p ? 'bg-indigo-600 hover:bg-indigo-700' : 'text-gray-600 border-gray-200 hover:bg-gray-50'}`}
-                    onClick={() => setCurrentPage(Number(p))}
+                    onClick={() => setCurrentPage(p)}
                   >
                     {p}
                   </Button>
                 )
               ));
             })()}
-
             <Button
               variant="outline"
               size="sm"
@@ -416,12 +386,11 @@ const handleDelete = async (id: number) => {
           </div>
         </div>
 
-        {/* Create Modal */}
         <QuestionModal
           isOpen={isModalOpen}
           onClose={() => setIsModalOpen(false)}
           onSubmit={handleSaveQuestion}
-          categories={categories}
+          subjects={subjects}
           initialData={editingQuestion}
         />
       </div>

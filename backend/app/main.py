@@ -5,14 +5,12 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from app.models import Base
-from app import models
 from app.database import engine
-from app.routes import auth, roles, users, categories, questions, test, candidates
+from app.routes import auth, roles, users, subjects, questions, test, candidates
 
-models.Base.metadata.create_all(bind=engine)
+# The schema is managed only by Alembic migrations: run `alembic upgrade head` before starting.
 
-app = FastAPI(title="Interview Test Platform")
+app = FastAPI(title="EvaluatorAI API")
 
 ALLOWED_ORIGINS = [
     "http://localhost:3000",  # Local development
@@ -54,14 +52,29 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             }
         )
 
-    # Handle empty strings or validation failures
-    if errors and errors[0].get("type") in ["string_too_short", "value_error"]:
-        field_name = errors[0].get("loc")[-1]
+    # Handle length and format failures with the real reason
+    if errors and errors[0].get("type") in ["string_too_short", "string_too_long", "value_error"]:
+        error = errors[0]
+        field_name = error.get("loc")[-1]
+        ctx = error.get("ctx") or {}
+
+        if error["type"] == "string_too_short":
+            min_length = ctx.get("min_length", 1)
+            message = (f"{field_name} cannot be empty" if min_length <= 1
+                       else f"{field_name} must be at least {min_length} characters")
+        elif error["type"] == "string_too_long":
+            message = f"{field_name} must be at most {ctx.get('max_length')} characters"
+        elif field_name == "email":
+            message = "Please enter a valid email address"
+        else:
+            # Custom validators raise ValueError("..."); pydantic prefixes it with "Value error, "
+            message = error.get("msg", "").removeprefix("Value error, ") or f"{field_name} is invalid"
+
         return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             content={
                 "status": 422,
-                "error": f"{field_name} cannot be empty"
+                "error": message
             }
         )
 
@@ -79,14 +92,14 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 app.include_router(auth.router)
 app.include_router(roles.router)
 app.include_router(users.router)
-app.include_router(categories.router)
+app.include_router(subjects.router)
 app.include_router(questions.router)
 app.include_router(test.router)
 app.include_router(candidates.router)
 
 @app.get("/")
 def read_root():
-    return {"status" : "ok", "message" : "Interview Test Platform - dev server" }
+    return {"status" : "ok", "message" : "EvaluatorAI API - dev server" }
 
 class HelloIn(BaseModel):
     name: str

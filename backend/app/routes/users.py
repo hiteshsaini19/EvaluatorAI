@@ -7,14 +7,14 @@ from app.auth import hash_password, get_current_user, require_admin
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
-# CREATE USER - Public (No authentication required)
+# CREATE USER - Admin Only (can set any role). Public sign-up is POST /auth/signup.
 @router.post("/", response_model=schemas.UserResponse)
 def create_user(
-    user: schemas.UserCreate, 
-    db: Session = Depends(get_db)
+    user: schemas.UserCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_admin)
 ):
-    # Public endpoint for user registration.
-    # No authentication required - anyone can create an account.
+    user.email = user.email.strip().lower()
 
     # Check if email already exists
     existing_user = db.query(models.User).filter(models.User.email == user.email).first()
@@ -112,6 +112,7 @@ def update_user(
         db_user.name = user.name
 
     if user.email is not None:
+        user.email = user.email.strip().lower()
         # Check if email is already taken by another user
         existing = db.query(models.User).filter(
             models.User.email == user.email,

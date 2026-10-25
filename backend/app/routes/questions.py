@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, status, Query
 from fastapi.responses import JSONResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from typing import Optional
 from app import models, schemas
 from app.database import get_db
@@ -9,93 +9,74 @@ import json
 
 router = APIRouter(prefix="/questions", tags=["Questions"])
 
-# Create Question - Any authenticated user can create
+
+def serialize_question(question: models.Question) -> dict:
+    subject = question.subject
+    return {
+        "id": question.id,
+        "subject_id": question.subject_id,
+        "subject_name": subject.name if subject else "Unassigned",
+        "subject_group": subject.group_name if subject else None,
+        "question_text": question.question_text,
+        "options": json.loads(question.options),
+        "correct_option": question.correct_option,
+        "difficulty": question.difficulty,
+        "user_id": question.user_id,
+        "created_at": question.created_at.isoformat(),
+    }
+
+
+def get_active_subject(db: Session, subject_id: int):
+    return db.query(models.Subject).filter(
+        models.Subject.id == subject_id,
+        models.Subject.is_active.is_(True)
+    ).first()
+
+
+def validate_options(options: dict):
+    # Returns an error message, or None when valid
+    if not options:
+        return "options is a required field and cannot be empty"
+    for key, value in options.items():
+        if not value or not value.strip():
+            return f"Option '{key}' cannot be empty"
+    return None
+
+
+def bad_request(message: str):
+    return JSONResponse(status_code=400, content={"status": 400, "error": message})
+
+
+# Create Question - Admin only
 @router.post("/", response_model=schemas.QuestionResponse)
 def create_question(
     question: schemas.QuestionCreate,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_admin)
 ):
-    # Validate question_text is not empty
     if not question.question_text or not question.question_text.strip():
-        return JSONResponse(
-            status_code=400,
-            content={
-                "status": 400,
-                "error": "question_text is a required field and cannot be empty"
-            }
-        )
+        return bad_request("question_text is a required field and cannot be empty")
 
-    # Validate options is not empty
-    if not question.options or len(question.options) == 0:
-        return JSONResponse(
-            status_code=400,
-            content={
-                "status": 400,
-                "error": "options is a required field and cannot be empty"
-            }
-        )
+    options_error = validate_options(question.options)
+    if options_error:
+        return bad_request(options_error)
 
-    # Validate each option value is not empty
-    for key, value in question.options.items():
-        if not value or not value.strip():
-            return JSONResponse(
-                status_code=400,
-                content={
-                    "status": 400,
-                    "error": f"Option '{key}' cannot be empty"
-                }
-            )
-
-    # Validate correct_option is not empty
     if not question.correct_option or not question.correct_option.strip():
-        return JSONResponse(
-            status_code=400,
-            content={
-                "status": 400,
-                "error": "correct_option is a required field and cannot be empty"
-            }
-        )
+        return bad_request("correct_option is a required field and cannot be empty")
 
-    # Validate category exists
-    category = db.query(models.Category).filter(
-        models.Category.id == question.category_id
-    ).first()
-    if not category:
-        return JSONResponse(status_code=404, content={
-            "status": 404,
-            "error": "Category not found"
-        })
+    if not get_active_subject(db, question.subject_id):
+        return JSONResponse(status_code=404, content={"status": 404, "error": "Subject not found"})
 
-    # Validate correct_option is one of the option keys
     if question.correct_option not in question.options:
-        return JSONResponse(
-            status_code=400,
-            content={
-                "status": 400,
-                "error": f"correct_option '{question.correct_option}' must be one of the option keys"
-            }
-        )
+        return bad_request(f"correct_option '{question.correct_option}' must be one of the option keys")
 
-    # Validate correct_option is a single character
     if len(question.correct_option) != 1:
-        return JSONResponse(
-            status_code=400,
-            content={
-                "status": 400,
-                "error": "correct_option must be a single character (e.g., 'a', 'b', 'c', 'd')"
-            }
-        )
+        return bad_request("correct_option must be a single character (e.g., 'a', 'b', 'c', 'd')")
 
-    # Convert options dict to JSON string for storage
-    options_json = json.dumps(question.options)
-
-    # Create question
     db_question = models.Question(
-        category_id=question.category_id,
-        # sub_category_id removed
+        subject_id=question.subject_id,
         question_text=question.question_text,
-        options=options_json,
+        options=json.dumps(question.options),
         correct_option=question.correct_option,
         difficulty=question.difficulty.value,
         user_id=current_user.id
@@ -105,17 +86,15 @@ def create_question(
     db.commit()
     db.refresh(db_question)
 
-    # Convert options back to dict for response
-    db_question.options = json.loads(db_question.options)
-
-    return db_question
+    return serialize_question(db_question)
 
 
 # Get all questions with optional filters - Any authenticated user
 @router.get("/", response_model=schemas.QuestionPaginatedResponse)
 def get_questions(
-    category_id: Optional[int] = Query(None, description="Filter by category ID"),
-    parent_category: Optional[str] = Query(None, description="Filter by parent category name"),
+    subject_id: Optional[int] = Query(None, description="Filter by subject ID"),
+    group: Optional[str] = Query(None, description="Filter by subject group name"),
+    unassigned: bool = Query(False, description="Only questions without a subject"),
     difficulty: Optional[schemas.DifficultyEnum] = Query(None, description="Filter by difficulty: Easy, Medium, or Hard"),
     search: Optional[str] = Query(None, description="Search term for question text"),
     page: int = Query(1, ge=1, description="Page number (starts from 1)"),
@@ -123,73 +102,32 @@ def get_questions(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
+    query = db.query(models.Question).options(joinedload(models.Question.subject))
 
-    # Start with base query
-    query = db.query(models.Question)
+    if unassigned:
+        query = query.filter(models.Question.subject_id.is_(None))
+    elif subject_id is not None:
+        query = query.filter(models.Question.subject_id == subject_id)
+    elif group:
+        query = query.join(models.Subject).filter(models.Subject.group_name == group)
 
-    # Apply category filter if provided
-    if category_id is not None:
-        # Validate category exists
-        category = db.query(models.Category).filter(
-            models.Category.id == category_id
-        ).first()
-        if not category:
-            return JSONResponse(status_code=404, content = {
-                "status" : 404,
-                "error" : "Category not found"
-            })
-
-        query = query.filter(models.Question.category_id == category_id)
-
-    # Apply parent category filter if provided
-    if parent_category:
-        query = query.join(models.Category).filter(models.Category.parent_category == parent_category)
-
-    # Apply difficulty filter if provided
     if difficulty is not None:
         query = query.filter(models.Question.difficulty == difficulty.value)
 
-    # Apply search filter if provided
     if search:
         query = query.filter(models.Question.question_text.ilike(f"%{search}%"))
 
-    # Get total count before pagination
     total = query.count()
 
-    # Calculate skip value
-    skip = (page - 1) * per_page
-
-    # Execute query with pagination
-    questions = query.offset(skip).limit(per_page).all()
-
-    # Build response with category and subcategory names
-    result = []
-    for question in questions:
-        # Get category name
-        category = db.query(models.Category).filter(
-            models.Category.id == question.category_id
-        ).first()
-        category_name = category.name if category else "Unknown"
-
-        # Convert options from JSON string to dict
-        options_dict = json.loads(question.options)
-
-        # Build response dict
-        question_dict = {
-            "id": question.id,
-            "category_id": question.category_id,
-            "category_name": category_name,
-            "question_text": question.question_text,
-            "options": options_dict,
-            "correct_option": question.correct_option,
-            "difficulty": question.difficulty,
-            "user_id": question.user_id,
-            "created_at": question.created_at.isoformat()
-        }
-        result.append(question_dict)
+    questions = (
+        query.order_by(models.Question.id)
+        .offset((page - 1) * per_page)
+        .limit(per_page)
+        .all()
+    )
 
     return {
-        "items": result,
+        "items": [serialize_question(q) for q in questions],
         "total": total,
         "page": page,
         "per_page": per_page
@@ -203,8 +141,6 @@ def get_question(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-    # Get a specific question by ID
-
     db_question = db.query(models.Question).filter(
         models.Question.id == question_id
     ).first()
@@ -215,38 +151,15 @@ def get_question(
             "error" : "Question not found"
         })
 
+    return serialize_question(db_question)
 
-    # Get category name
-    category = db.query(models.Category).filter(
-        models.Category.id == db_question.category_id
-    ).first()
-    category_name = category.name if category else "Unknown"
-
-    # Convert options from JSON string to dict
-    options_dict = json.loads(db_question.options)
-
-    # Build response dict
-    question_dict = {
-        "id": db_question.id,
-        "category_id": db_question.category_id,
-        "category_name": category_name,
-        "question_text": db_question.question_text,
-        "options": options_dict,
-        "correct_option": db_question.correct_option,
-        "difficulty": db_question.difficulty,
-        "user_id": db_question.user_id,
-        "created_at": db_question.created_at.isoformat()
-    }
-
-    return question_dict
-
-# Update question - Admin or creator can update
+# Update question - Admin only
 @router.put("/{question_id}", response_model=schemas.QuestionResponse)
 def update_question(
     question_id: int,
     question: schemas.QuestionUpdate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_admin)  # ✅ Only Admin can update questions
+    current_user: models.User = Depends(require_admin)
 ):
     db_question = db.query(models.Question).filter(
         models.Question.id == question_id
@@ -258,108 +171,49 @@ def update_question(
             "error": "Question not found"
         })
 
-    # Validate question_text if provided
     if question.question_text is not None:
         if not question.question_text.strip():
-            return JSONResponse(
-                status_code=400,
-                content={
-                    "status": 400,
-                    "error": "'question_text' cannot be empty"
-                }
-            )
+            return bad_request("'question_text' cannot be empty")
         db_question.question_text = question.question_text
 
-    # Validate options if provided
     if question.options is not None:
-        if len(question.options) == 0:
-            return JSONResponse(
-                status_code=400,
-                content={
-                    "status": 400,
-                    "error": "'options' cannot be empty"
-                }
-            )
+        options_error = validate_options(question.options)
+        if options_error:
+            return bad_request(options_error)
 
-        # Validate each option value is not empty
-        for key, value in question.options.items():
-            if not value or not value.strip():
-                return JSONResponse(
-                    status_code=400,
-                    content={
-                        "status": 400,
-                        "error": f"Option '{key}' cannot be empty"
-                    }
-                )
-
-        # Validate correct_option still exists in new options if correct_option not being updated
+        # Current correct_option must still exist in the new options if it is not being updated
         if question.correct_option is None and db_question.correct_option not in question.options:
-            return JSONResponse(
-                status_code=400,
-                content={
-                    "status": 400,
-                    "error": f"Current correct_option '{db_question.correct_option}' must exist in new options"
-                }
-            )
+            return bad_request(f"Current correct_option '{db_question.correct_option}' must exist in new options")
         db_question.options = json.dumps(question.options)
 
-    # Validate correct_option if provided
     if question.correct_option is not None:
         if not question.correct_option.strip():
-            return JSONResponse(
-                status_code=400,
-                content={
-                    "status": 400,
-                    "error": "'correct_option' cannot be empty"
-                }
-            )
+            return bad_request("'correct_option' cannot be empty")
 
-        # Validate single character
         if len(question.correct_option) != 1:
-            return JSONResponse(
-                status_code=400,
-                content={
-                    "status": 400,
-                    "error": "correct_option must be a single character"
-                }
-            )
+            return bad_request("correct_option must be a single character")
 
-        # Validate it exists in options
         current_options = json.loads(db_question.options)
         if question.correct_option not in current_options:
-            return JSONResponse(
-                status_code=400,
-                content={
-                    "status": 400,
-                    "error": "correct_option must be one of the option keys"
-                }
-            )
+            return bad_request("correct_option must be one of the option keys")
 
         db_question.correct_option = question.correct_option
 
-    # Update category_id if provided
-    if question.category_id is not None:
-        category = db.query(models.Category).filter(
-            models.Category.id == question.category_id
-        ).first()
-        if not category:
+    if question.subject_id is not None:
+        if not get_active_subject(db, question.subject_id):
             return JSONResponse(status_code=404, content={
                 "status": 404,
-                "error": "Category not found"
+                "error": "Subject not found"
             })
-        db_question.category_id = question.category_id
+        db_question.subject_id = question.subject_id
 
-    # Update difficulty if provided
     if question.difficulty is not None:
         db_question.difficulty = question.difficulty.value
 
     db.commit()
     db.refresh(db_question)
 
-    # Convert options back to dict for response
-    db_question.options = json.loads(db_question.options)
-
-    return db_question
+    return serialize_question(db_question)
 
 # Delete question - Only Admin can delete
 @router.delete("/{question_id}")

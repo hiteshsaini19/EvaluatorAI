@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: interview-test-platform-api
+    name: evaluatorai-api
     env: python
     rootDir: backend
     buildCommand: "pip install -r requirements.txt"
@@ -10,7 +10,7 @@ services:
         value: 3.11.0
       - key: DATABASE_URL
         fromDatabase:
-          name: interview-test-db
+          name: evaluatorai-db
           property: connectionString
       - key: SECRET_KEY
         generateValue: true
@@ -20,6 +20,6 @@ services:
         value: 30
 
 databases:
-  - name: interview-test-db
-    databaseName: interview_test_db
-    user: interview_user
+  - name: evaluatorai-db
+    databaseName: evaluatorai
+    user: evaluatorai_user
