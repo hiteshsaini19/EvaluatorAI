@@ -15,6 +15,7 @@ This file is the single source of truth for turning the platform into a free, pu
 7. **Progress lives in `CHANGELOG.md`.** At the end of every phase, the phase is marked Completed there with a full list of what changed.
 8. **Resuming work:** at the start of every session, `CHANGELOG.md` is checked first, and work continues from the first phase not marked Completed.
 9. **Commit messages** never mention phases. Each one describes in detail the functionality it adds or changes.
+10. **All code first, hosted database last.** Phases 1–4 (all the code) are finished before anything is set up online. Until Phase 5, everything runs and is checked against the **local development database** (section 7), so no phase waits on a hosted database. Neon, Render and Vercel are only touched in Phase 5.
 
 ---
 
@@ -362,7 +363,16 @@ Each phase lists: goal, backend work, frontend work, data changes, what is out o
 
 ## 7. Verification approach (every phase)
 
-- **Backend:** run against a **throwaway local PostgreSQL instance** started from the installed PostgreSQL binaries, on a separate port with its own temporary data folder, so the owner's own database is never touched. Migrations are run, and endpoints are called by hand as each role.
+**Local development database** (set up 2026-10-25, used until Phase 5):
+- A PostgreSQL 18 instance just for this project, separate from the PostgreSQL service already installed on the machine, so that one is never touched.
+- Data folder `%LOCALAPPDATA%\EvaluatorAI\pgdata`, port **5433**, database `interview_test_db`. The generated password and connection string are only in `backend/.env` (git-ignored).
+- It doesn't start by itself after a reboot. Start it with:
+  `& "C:\Program Files\PostgreSQL\18\bin\pg_ctl.exe" -D "$env:LOCALAPPDATA\EvaluatorAI\pgdata" -o "-p 5433" -l "$env:LOCALAPPDATA\EvaluatorAI\postgres.log" start`
+  (use `stop` instead of `start` to stop it).
+- Every phase that adds a migration ends with `alembic upgrade head` and `seed.py` run against it, so the app is ready to use.
+
+**Checks:**
+- **Backend:** run against a **throwaway local PostgreSQL instance** started from the installed PostgreSQL binaries, on a separate port with its own temporary data folder, so migrations can be tested on empty and old-format databases without touching the development database. Endpoints are called by hand as each role.
 - **Frontend:** a production build (type-check included), plus a read-through of each changed page's states (loading, empty, error, success).
 - **Hand-over:** a written summary of what changed, what was verified, anything not verified, and a browser checklist for the owner.
 

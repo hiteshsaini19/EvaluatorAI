@@ -13,6 +13,12 @@ To resume work, take the **first phase not marked Completed** below.
 
 ---
 
+## Plan change: all code first, local database until deployment (2026-10-25)
+- All code phases (1–4) are finished before any hosted database or hosting is set up; Phase 5 is the only online step.
+- Until then the app runs on a local PostgreSQL instance just for this project (port 5433, data in `%LOCALAPPDATA%\EvaluatorAI\pgdata`), separate from the PostgreSQL service already installed. It has been migrated to the latest schema and seeded. Its connection details are only in `backend/.env`; the start command is in the README and in section 7 of the plan.
+
+---
+
 ## Phase 2: Test model, timers and candidate flow (Completed 2026-10-25)
 
 ### Added

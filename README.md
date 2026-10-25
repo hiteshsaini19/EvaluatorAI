@@ -30,8 +30,16 @@ Prerequisites: Python 3.11+, Node.js 20+, PostgreSQL.
 
 ### 1. Database
 
+Any local PostgreSQL works:
+
 ```powershell
 psql -U postgres -c "CREATE DATABASE interview_test_db;"
+```
+
+On the main development machine the project has its own PostgreSQL instance (port 5433, data in `%LOCALAPPDATA%\EvaluatorAI\pgdata`, credentials in `backend/.env`). It doesn't start on boot; start it with:
+
+```powershell
+& "C:\Program Files\PostgreSQL\18\bin\pg_ctl.exe" -D "$env:LOCALAPPDATA\EvaluatorAI\pgdata" -o "-p 5433" -l "$env:LOCALAPPDATA\EvaluatorAI\postgres.log" start
 ```
 
 ### 2. Backend
