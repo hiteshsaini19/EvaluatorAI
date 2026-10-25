@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { isAuthenticated } from '@/lib/auth';
-import { getTest, removeTestQuestion } from '@/lib/api';
+import { getTest, removeTestQuestion, getErrorMessage, getErrorStatus } from '@/lib/api';
 import {
   TestDetail, candidateLink, difficultyBadgeClass, formatDateTime, formatMinutes, formatTimeLeft,
 } from '@/lib/tests';
@@ -31,7 +31,7 @@ export default function TestViewPage() {
     }
     getTest(code)
       .then(res => setTest(res.data))
-      .catch(err => setError(err.response?.data?.error || 'Failed to load the test'))
+      .catch(err => setError(getErrorMessage(err, 'Failed to load the test')))
       .finally(() => setLoading(false));
   }, [code, router]);
 
@@ -54,12 +54,12 @@ export default function TestViewPage() {
         questions: test.questions.filter(q => q.id !== questionId),
         question_count: test.question_count - 1,
       });
-    } catch (err: any) {
-      if (err.response?.status === 409) {
+    } catch (err) {
+      if (getErrorStatus(err) === 409) {
         // A candidate started in the meantime
         setTest({ ...test, is_locked: true });
       }
-      alert(err.response?.data?.error || 'Failed to remove the question');
+      alert(getErrorMessage(err, 'Failed to remove the question'));
     } finally {
       setRemovingId(null);
     }
@@ -76,8 +76,8 @@ export default function TestViewPage() {
   if (error || !test) {
     return (
       <>
-        <TopNav title="Tests" subtitle="View test" />
-        <div className="p-8">
+        <TopNav title="Tests" subtitle="View test" pageTitle={test?.test_name || "View test"} />
+        <div className="p-4 sm:p-8">
           <Card className="border-red-200 bg-red-50">
             <CardContent className="pt-6 text-red-700">
               {error || 'Test not found'}
@@ -93,9 +93,9 @@ export default function TestViewPage() {
 
   return (
     <div className="pb-12">
-      <TopNav title="Tests" subtitle="View test" />
+      <TopNav title="Tests" subtitle="View test" pageTitle={test?.test_name || "View test"} />
 
-      <div className="max-w-5xl mx-auto px-8 py-6 space-y-6">
+      <div className="max-w-5xl mx-auto p-4 sm:px-8 sm:py-6 space-y-6">
         <Link href="/tests" className="inline-flex items-center text-sm font-medium text-blue-600 hover:text-blue-800">
           <ChevronLeft className="w-4 h-4" /> Back to my tests
         </Link>

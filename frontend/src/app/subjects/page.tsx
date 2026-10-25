@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { getSubjects } from '@/lib/api';
+import { getSubjects, getErrorMessage } from '@/lib/api';
 import { Subject, groupSubjects } from '@/lib/subjects';
 import { useAdminGuard } from '@/lib/useAdminGuard';
 import TopNav from '@/components/TopNav';
@@ -20,7 +20,7 @@ export default function SubjectsPage() {
     if (!isAdmin) return;
     getSubjects()
       .then(res => setSubjects(res.data))
-      .catch(err => setError(err.response?.data?.error || 'Failed to load subjects'))
+      .catch(err => setError(getErrorMessage(err, 'Failed to load subjects')))
       .finally(() => setLoading(false));
   }, [isAdmin]);
 
@@ -43,7 +43,7 @@ export default function SubjectsPage() {
   return (
     <>
       <TopNav title="Subjects" subtitle="The fixed subject catalogue test creators choose from" />
-      <div className="p-8 space-y-6">
+      <div className="p-4 sm:p-8 space-y-6">
         {loading ? (
           <div className="text-center text-gray-500 py-12">Loading subjects...</div>
         ) : error ? (

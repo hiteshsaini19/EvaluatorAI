@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { isAuthenticated } from '@/lib/auth';
-import { getSubjects, generateTest, getGenerationQuota, GenerateTestPayload } from '@/lib/api';
+import { getSubjects, generateTest, getGenerationQuota, GenerateTestPayload, getErrorBody } from '@/lib/api';
 import { Subject, groupSubjects } from '@/lib/subjects';
 import { DIFFICULTIES, candidateLink, formatDateTime } from '@/lib/tests';
 import TopNav from '@/components/TopNav';
@@ -187,8 +187,8 @@ export default function CreateTestPage() {
       const res = await generateTest(payload);
       setCreated(res.data);
       getGenerationQuota().then(r => setQuota(r.data)).catch(() => {});
-    } catch (err: any) {
-      const data = err.response?.data;
+    } catch (err) {
+      const data = getErrorBody(err);
       let message = data?.error || 'Failed to generate the test. Check your connection and try again.';
       if (data?.code === 'quota' && data?.retry_at) {
         message += ` (That's ${formatLocalTime(data.retry_at)} your time.)`;
@@ -211,10 +211,10 @@ export default function CreateTestPage() {
     const short = created.question_count < created.requested_questions;
     return (
       <>
-        <TopNav title="Tests" subtitle="Create Test" />
-        <div className="p-8 max-w-3xl">
+        <TopNav title="Tests" subtitle="Create Test" pageTitle="Create Test" />
+        <div className="p-4 sm:p-8 max-w-3xl">
           <Card className="border-t-4 border-t-green-500">
-            <CardContent className="p-8 space-y-6">
+            <CardContent className="p-5 sm:p-8 space-y-6">
               <div className="flex items-start gap-3">
                 <CheckCircle2 className="w-8 h-8 text-green-500 shrink-0" />
                 <div>
@@ -274,9 +274,9 @@ export default function CreateTestPage() {
 
   return (
     <>
-      <TopNav title="Tests" subtitle="Create Test" />
+      <TopNav title="Tests" subtitle="Create Test" pageTitle="Create Test" />
 
-      <form onSubmit={handleGenerate} className="p-8 max-w-5xl space-y-6">
+      <form onSubmit={handleGenerate} className="p-4 sm:p-8 max-w-5xl space-y-6">
         <Link href="/tests" className="inline-flex items-center text-sm font-medium text-blue-600 hover:text-blue-800">
           <ChevronLeft className="w-4 h-4" /> Back to my tests
         </Link>

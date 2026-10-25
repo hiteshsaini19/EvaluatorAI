@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { isAuthenticated } from '@/lib/auth';
-import { getTests, deleteTest } from '@/lib/api';
+import { getTests, deleteTest, getErrorMessage } from '@/lib/api';
 import { TestSummary, candidateLink, formatDateTime, formatMinutes, formatTimeLeft } from '@/lib/tests';
 import TopNav from '@/components/TopNav';
 import {
@@ -40,8 +40,8 @@ export default function TestsPage() {
       const response = await getTests();
       setTests(response.data);
       setError('');
-    } catch (err: any) {
-      setError(err.response?.data?.error || 'Failed to load tests');
+    } catch (err) {
+      setError(getErrorMessage(err, 'Failed to load tests'));
     } finally {
       setLoading(false);
     }
@@ -52,8 +52,8 @@ export default function TestsPage() {
     try {
       await deleteTest(test.id);
       setTests(prev => prev.filter(t => t.id !== test.id));
-    } catch (e: any) {
-      alert(e.response?.data?.detail || e.response?.data?.error || 'Failed to delete test');
+    } catch (e) {
+      alert(getErrorMessage(e, 'Failed to delete test'));
     }
   };
 
@@ -65,9 +65,9 @@ export default function TestsPage() {
 
   return (
     <>
-      <TopNav title="Tests" subtitle="Generate tests and share links with candidates" />
+      <TopNav title="Tests" subtitle="Generate tests and share links with candidates" pageTitle="My Tests" />
 
-      <div className="p-8">
+      <div className="p-4 sm:p-8">
         <div className="flex flex-wrap gap-4 justify-between items-center mb-8">
           <div>
             <h1 className="text-3xl font-bold text-gray-900 mb-1">My Tests</h1>
@@ -98,7 +98,48 @@ export default function TestsPage() {
             </CardContent>
           </Card>
         ) : (
-          <div className="bg-white rounded-lg border shadow-sm overflow-x-auto">
+          <>
+          {/* Phones: one card per test */}
+          <div className="md:hidden space-y-3">
+            {tests.map((test) => (
+              <Card key={test.id}>
+                <CardContent className="p-4 space-y-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="font-bold text-gray-900">{test.test_name || 'Untitled test'}</div>
+                      <div className="text-xs text-gray-500 mt-0.5">{test.subjects.join(', ') || 'No subjects'}</div>
+                    </div>
+                    {test.is_expired ? (
+                      <span className="shrink-0 px-2.5 py-0.5 text-xs font-bold rounded-full bg-gray-100 text-gray-600">Expired</span>
+                    ) : (
+                      <span className="shrink-0 px-2.5 py-0.5 text-xs font-bold rounded-full bg-green-50 text-green-700 border border-green-100">Active</span>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-600">
+                    <span>{test.question_count} questions</span>
+                    <span>{formatMinutes(test.duration_minutes)}</span>
+                    <span>{test.attempt_count} {test.attempt_count === 1 ? 'attempt' : 'attempts'}</span>
+                    {!test.is_expired && <span>{formatTimeLeft(test.expires_at)}</span>}
+                  </div>
+                  <div className="flex flex-wrap gap-x-5 gap-y-2 pt-1 text-sm font-bold">
+                    <button
+                      onClick={() => copyLink(test.test_code)}
+                      className={`flex items-center gap-1 ${copiedCode === test.test_code ? 'text-green-600' : 'text-blue-600'}`}
+                    >
+                      {copiedCode === test.test_code
+                        ? <><Check className="w-3.5 h-3.5" /> Copied</>
+                        : <><Copy className="w-3.5 h-3.5" /> Share</>}
+                    </button>
+                    <Link href={`/tests/${test.test_code}`} className="text-blue-700">View</Link>
+                    <Link href={`/results?test=${test.test_code}`} className="text-blue-700">Results</Link>
+                    <button onClick={() => handleDelete(test)} className="text-red-500">Delete</button>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+
+          <div className="hidden md:block bg-white rounded-lg border shadow-sm overflow-x-auto">
             <Table>
               <TableHeader className="bg-gray-50/50">
                 <TableRow className="hover:bg-transparent">
@@ -170,6 +211,7 @@ export default function TestsPage() {
               <p className="text-xs text-gray-400 font-bold uppercase tracking-wider">Total: {tests.length} {tests.length === 1 ? 'test' : 'tests'}</p>
             </div>
           </div>
+          </>
         )}
       </div>
     </>

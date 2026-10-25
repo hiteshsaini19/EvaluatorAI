@@ -2,23 +2,20 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { isAuthenticated } from '@/lib/auth';
+import { useIsClient, useIsLoggedIn, usePageTitle } from '@/lib/auth';
 import { getCurrentUser, isAdminUser, SessionUser } from '@/lib/session';
 import TopNav from '@/components/TopNav';
 import { Button } from '@/components/ui/button';
 import { ListChecks, Sparkles, Share2, Timer } from 'lucide-react';
 
 export default function Home() {
-  const [mounted, setMounted] = useState(false);
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const mounted = useIsClient();
+  const isLoggedIn = useIsLoggedIn();
   const [user, setUser] = useState<SessionUser | null>(null);
 
   useEffect(() => {
-    setMounted(true);
-    const loggedIn = isAuthenticated();
-    setIsLoggedIn(loggedIn);
-    if (loggedIn) getCurrentUser().then(setUser);
-  }, []);
+    if (isLoggedIn) getCurrentUser().then(setUser);
+  }, [isLoggedIn]);
 
   if (!mounted) {
     return (
@@ -34,6 +31,7 @@ export default function Home() {
 }
 
 function Landing() {
+  usePageTitle(null);
   const steps = [
     {
       icon: ListChecks,
@@ -43,7 +41,7 @@ function Landing() {
     {
       icon: Sparkles,
       title: 'Get a ready-made test',
-      text: 'Questions are generated for you. Review them and remove any you don\'t want.',
+      text: 'AI writes the questions, with answers and explanations. Review them and remove any you don\'t want.',
     },
     {
       icon: Share2,
@@ -143,7 +141,7 @@ function Dashboard({ user }: { user: SessionUser | null }) {
         title="Dashboard"
         subtitle="Create tests and track candidate results"
       />
-      <div className="p-8">
+      <div className="p-4 sm:p-8">
         <div className="mb-8">
           <h2 className="text-3xl font-bold text-gray-800 mb-2">
             Welcome back{user?.name ? `, ${user.name}` : ''}!

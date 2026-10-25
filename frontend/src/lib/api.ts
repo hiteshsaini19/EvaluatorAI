@@ -1,11 +1,19 @@
-import axios from 'axios';
-import { getToken } from './auth';
+import axios, { AxiosError } from 'axios';
+import { getToken, removeToken } from './auth';
 
-// IMPORTANT: Remove the fallback localhost URL for production
 const API_URL = process.env.NEXT_PUBLIC_API_URL;
 
 if (!API_URL) {
   throw new Error('NEXT_PUBLIC_API_URL environment variable is not defined');
+}
+
+declare module 'axios' {
+  interface AxiosRequestConfig {
+    // Requests that are slow by nature (AI generation) don't trigger the "waking up" notice
+    skipWakeNotice?: boolean;
+    wakeTimer?: ReturnType<typeof setTimeout>;
+    wakeCounted?: boolean;
+  }
 }
 
 const api = axios.create({
@@ -16,38 +24,102 @@ const api = axios.create({
   },
 });
 
-// Add token to all requests
-api.interceptors.request.use(
-  (config) => {
-    const token = getToken();
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
-    }
-    return config;
-  },
-  (error) => {
-    return Promise.reject(error);
-  }
-);
+// ---- "Waking up the server" notice ----
+// The free backend sleeps when idle and takes up to a minute to wake. Any request still
+// pending after WAKE_NOTICE_MS counts as slow, and the notice shows while one is pending.
+const WAKE_NOTICE_MS = 5000;
+let slowRequests = 0;
+const wakeListeners = new Set<() => void>();
 
-// Global Interceptor for 401 Unauthorized (Session Expiry)
+const setSlowRequests = (change: number) => {
+  slowRequests = Math.max(0, slowRequests + change);
+  wakeListeners.forEach(listener => listener());
+};
+
+export const subscribeServerWaking = (listener: () => void) => {
+  wakeListeners.add(listener);
+  return () => { wakeListeners.delete(listener); };
+};
+
+export const isServerWaking = () => slowRequests > 0;
+
+const finishRequest = (config?: { wakeTimer?: ReturnType<typeof setTimeout>; wakeCounted?: boolean }) => {
+  if (!config) return;
+  clearTimeout(config.wakeTimer);
+  if (config.wakeCounted) {
+    config.wakeCounted = false;
+    setSlowRequests(-1);
+  }
+};
+
+// Add the token to all requests, and start the slow-request timer
+api.interceptors.request.use((config) => {
+  const token = getToken();
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  if (!config.skipWakeNotice && typeof window !== 'undefined') {
+    config.wakeTimer = setTimeout(() => {
+      config.wakeCounted = true;
+      setSlowRequests(1);
+    }, WAKE_NOTICE_MS);
+  }
+  return config;
+});
+
+// Session expiry: a 401 anywhere except the login call itself logs the user out
 api.interceptors.response.use(
-  (response) => response,
-  (error) => {
-    // Skip the login call itself, so a wrong password shows its error instead of reloading the page
+  (response) => {
+    finishRequest(response.config);
+    return response;
+  },
+  (error: AxiosError) => {
+    finishRequest(error.config);
     const isLoginRequest = error.config?.url === '/auth/login';
-    if (error.response && error.response.status === 401 && !isLoginRequest) {
-      if (typeof window !== 'undefined') {
-        localStorage.removeItem('auth_token');
-        localStorage.removeItem('user');
-        window.location.href = '/login';
-      }
+    if (error.response?.status === 401 && !isLoginRequest && typeof window !== 'undefined') {
+      removeToken();
+      window.location.href = '/login';
     }
     return Promise.reject(error);
   }
 );
 
-// API calls remain the same...
+// ---- Error helpers ----
+interface ApiErrorBody {
+  error?: string;
+  code?: string;
+  detail?: string | { error?: string };
+  retry_at?: string;
+}
+
+export const getErrorBody = (err: unknown): ApiErrorBody | undefined =>
+  axios.isAxiosError(err) ? (err.response?.data as ApiErrorBody | undefined) : undefined;
+
+export const getErrorStatus = (err: unknown): number | undefined =>
+  axios.isAxiosError(err) ? err.response?.status : undefined;
+
+export const getErrorCode = (err: unknown): string | undefined => getErrorBody(err)?.code;
+
+// The message to show for a failed request: the API's own message, a network message, or the fallback
+export const getErrorMessage = (err: unknown, fallback: string): string => {
+  if (axios.isAxiosError(err) && !err.response) {
+    return 'Could not reach the server. Check your connection and try again.';
+  }
+  const body = getErrorBody(err);
+  if (body?.error) return body.error;
+  if (typeof body?.detail === 'string') return body.detail;
+  if (body?.detail && typeof body.detail === 'object' && body.detail.error) return body.detail.error;
+  return fallback;
+};
+
+export interface QuestionPayload {
+  subject_id: number;
+  question_text: string;
+  options: Record<string, string>;
+  correct_option: string;
+  difficulty: string;
+}
+
 export const login = (email: string, password: string) =>
   api.post('/auth/login', { email, password });
 
@@ -65,10 +137,10 @@ export const getQuestions = (
 ) =>
   api.get('/questions/', { params: { page, per_page, ...filters } });
 
-export const createQuestion = (data: any) =>
+export const createQuestion = (data: QuestionPayload) =>
   api.post('/questions/', data);
 
-export const updateQuestion = (id: number, data: any) =>
+export const updateQuestion = (id: number, data: QuestionPayload) =>
   api.put(`/questions/${id}`, data);
 
 export const deleteQuestion = (id: number) =>
@@ -89,7 +161,7 @@ export interface GenerateTestPayload {
 }
 
 export const generateTest = (data: GenerateTestPayload) =>
-  api.post('/tests/generate', data);
+  api.post('/tests/generate', data, { skipWakeNotice: true });
 
 export const getGenerationQuota = () => api.get('/tests/generation-quota');
 

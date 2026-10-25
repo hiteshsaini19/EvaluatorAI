@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
+import { getErrorMessage, QuestionPayload } from '@/lib/api';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -21,7 +22,7 @@ export interface BankQuestion {
 interface QuestionModalProps {
     isOpen: boolean;
     onClose: () => void;
-    onSubmit: (data: any) => Promise<void>;
+    onSubmit: (data: QuestionPayload) => Promise<void>;
     subjects: Subject[];
     initialData?: BankQuestion | null;
 }
@@ -98,9 +99,9 @@ export default function QuestionModal({
             };
             await onSubmit(payload);
             onClose();
-        } catch (err: any) {
+        } catch (err) {
             console.error(err);
-            alert(err.response?.data?.error || 'Failed to save question');
+            alert(getErrorMessage(err, 'Failed to save question'));
         } finally {
             setLoading(false);
         }

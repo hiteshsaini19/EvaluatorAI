@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useMemo } from 'react';
-import { getQuestions, getSubjects, deleteQuestion, createQuestion, updateQuestion } from '@/lib/api';
+import { getQuestions, getSubjects, deleteQuestion, createQuestion, updateQuestion, getErrorMessage, QuestionPayload } from '@/lib/api';
 import { Subject, groupSubjects } from '@/lib/subjects';
 import { useAdminGuard } from '@/lib/useAdminGuard';
 import TopNav from '@/components/TopNav';
@@ -95,9 +95,9 @@ export default function QuestionsPage() {
       setQuestions(res.data.items);
       setTotalPages(Math.max(1, Math.ceil(res.data.total / perPage)));
       setTotalItems(res.data.total);
-    } catch (err: any) {
+    } catch (err) {
       console.error(err);
-      toast.error(err.response?.data?.error || 'Failed to load questions');
+      toast.error(getErrorMessage(err, 'Failed to load questions'));
     } finally {
       setLoading(false);
     }
@@ -116,12 +116,12 @@ export default function QuestionsPage() {
       toast.success('Question deleted successfully!');
       refreshAll();
     } catch (e) {
-      toast.error('Failed to delete question');
+      toast.error(getErrorMessage(e, 'Failed to delete question'));
     }
   };
 
   // Errors propagate to QuestionModal, which shows the message and stays open
-  const handleSaveQuestion = async (data: any) => {
+  const handleSaveQuestion = async (data: QuestionPayload) => {
     if (editingQuestion) {
       await updateQuestion(editingQuestion.id, data);
       toast.success('Question updated');
@@ -162,7 +162,7 @@ export default function QuestionsPage() {
     <>
       <TopNav title="Questions" subtitle="Manage the example question bank" />
       <Toaster position="top-right" />
-      <div className="p-8">
+      <div className="p-4 sm:p-8">
 
         {/* Bulk Import Section */}
         <div className="mb-6">

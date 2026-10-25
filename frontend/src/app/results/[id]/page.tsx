@@ -2,11 +2,13 @@
 
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { getResultDetail } from '@/lib/api';
+import { getResultDetail, getErrorMessage } from '@/lib/api';
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ChevronLeft, CheckCircle2, XCircle, Clock, Mail, User, FileText, Calendar, MinusCircle } from 'lucide-react';
 import Link from 'next/link';
+import { usePageTitle } from '@/lib/auth';
+import TopNav from '@/components/TopNav';
 import { FormattedText } from '@/components/FormattedText';
 import { AttemptStatus, STATUS_LABELS, difficultyBadgeClass, formatMinutes } from '@/lib/tests';
 
@@ -52,23 +54,15 @@ export default function ResultDetailPage() {
     const [data, setData] = useState<ResultData | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
+    usePageTitle(data ? `${data.candidate.name} · Results` : 'Result');
 
     useEffect(() => {
-        if (id) {
-            fetchDetail();
-        }
+        if (!id) return;
+        getResultDetail(Number(id))
+            .then(response => setData(response.data))
+            .catch(err => setError(getErrorMessage(err, 'Failed to fetch result details')))
+            .finally(() => setLoading(false));
     }, [id]);
-
-    const fetchDetail = async () => {
-        try {
-            const response = await getResultDetail(Number(id));
-            setData(response.data);
-            setLoading(false);
-        } catch (err: any) {
-            setError(err.response?.data?.error || err.message || 'Failed to fetch result details');
-            setLoading(false);
-        }
-    };
 
     const formatDate = (dateStr: string) => {
         const d = new Date(dateStr);
@@ -136,7 +130,9 @@ export default function ResultDetailPage() {
     };
 
     return (
-        <div className="max-w-6xl mx-auto space-y-8 py-8 px-4 animate-in fade-in duration-500">
+        <>
+        <TopNav title="Results" subtitle="Candidate result" />
+        <div className="max-w-6xl mx-auto space-y-8 p-4 sm:p-8 animate-in fade-in duration-500">
             {/* Header */}
             <div className="space-y-4">
                 <Link
@@ -344,7 +340,7 @@ export default function ResultDetailPage() {
                                                                     {isSelected && (
                                                                         <span className={`text-[10px] font-black flex items-center gap-1 uppercase tracking-wider ${isCorrect ? 'text-green-600' : 'text-red-600'
                                                                             }`}>
-                                                                            <User className="w-3 h-3" /> Candidate's Answer
+                                                                            <User className="w-3 h-3" /> Candidate&apos;s Answer
                                                                         </span>
                                                                     )}
                                                                 </div>
@@ -366,5 +362,6 @@ export default function ResultDetailPage() {
                 ))}
             </div>
         </div>
+        </>
     );
 }

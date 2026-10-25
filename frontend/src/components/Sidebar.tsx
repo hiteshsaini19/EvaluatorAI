@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import { getCurrentUser, isAdminUser } from '@/lib/session';
 
-export default function Sidebar() {
+export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
   const [isAdmin, setIsAdmin] = useState(false);
 
@@ -32,7 +32,7 @@ export default function Sidebar() {
   ];
 
   return (
-    <div className="w-64 bg-indigo-900 min-h-screen fixed left-0 top-0 text-white">
+    <div className="w-64 bg-indigo-900 h-screen overflow-y-auto fixed left-0 top-0 z-40 text-white">
       {/* Logo */}
       <div className="p-6 flex items-center gap-3">
         <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center shrink-0">
@@ -51,6 +51,7 @@ export default function Sidebar() {
             <Link
               key={item.href}
               href={item.href}
+              onClick={onNavigate}
               className={`flex items-center gap-3 px-6 py-3 transition-colors ${
                 isActive
                   ? 'bg-indigo-800 border-l-4 border-white'

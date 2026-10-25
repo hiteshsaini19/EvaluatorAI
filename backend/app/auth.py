@@ -2,7 +2,7 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from jose import JWTError, jwt
-from passlib.context import CryptContext
+import bcrypt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
@@ -19,21 +19,24 @@ SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = os.getenv("ALGORITHM")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES"))
 
-# Password hashing context
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# bcrypt only uses the first 72 bytes of a password; cut explicitly so long passwords behave the same everywhere
+BCRYPT_MAX_BYTES = 72
 
 # OAuth2 scheme for token authentication
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
 # Hash password
 def hash_password(password: str) -> str:
-    # Convert plain password to hashed password
-    return pwd_context.hash(password)
+    # Convert plain password to a bcrypt hash ($2b$, the same format passlib produced)
+    return bcrypt.hashpw(password.encode("utf-8")[:BCRYPT_MAX_BYTES], bcrypt.gensalt()).decode("utf-8")
 
 # Verify password
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     # Check if plain password matches hashed password
-    return pwd_context.verify(plain_password, hashed_password)
+    try:
+        return bcrypt.checkpw(plain_password.encode("utf-8")[:BCRYPT_MAX_BYTES], hashed_password.encode("utf-8"))
+    except ValueError:  # Not a valid bcrypt hash
+        return False
 
 # Create JWT token
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
@@ -101,20 +104,5 @@ def require_creator_or_admin(current_user: models.User = Depends(get_current_use
             detail={
                 "status": 403,
                 "error": "Only Admin or Creator can perform this action"
-            })
-    return current_user
-
-
-def require_self_or_admin(user_id: int, current_user: models.User = Depends(get_current_user)):
-    # Dependency to ensure user is either accessing their own resource or is an Admin.
-    # This is useful for update/delete operations where users can modify their own data.
-    # This requires user_id to be passed as a path parameter.
-
-    if current_user.role.role_name != "Admin" and current_user.id != user_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={
-                "status": 403,
-                "error": "You can only access your own resources"
             })
     return current_user

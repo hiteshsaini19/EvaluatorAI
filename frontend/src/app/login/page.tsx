@@ -7,24 +7,23 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { login, getMe } from '@/lib/api';
-import { saveToken, saveUser, removeToken, isAuthenticated } from '@/lib/auth';
+import { login, getMe, getErrorMessage } from '@/lib/api';
+import { saveToken, saveUser, removeToken, useIsClient, useIsLoggedIn, usePageTitle } from '@/lib/auth';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [mounted, setMounted] = useState(false);
+  const mounted = useIsClient();
+  const isLoggedIn = useIsLoggedIn();
   const router = useRouter();
+  usePageTitle('Log in');
 
-  // Check auth only after component mounts on client
+  // Already logged in: go to the dashboard
   useEffect(() => {
-    setMounted(true);
-    if (isAuthenticated()) {
-      router.push('/');
-    }
-  }, [router]);
+    if (isLoggedIn) router.push('/');
+  }, [isLoggedIn, router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,10 +41,10 @@ export default function LoginPage() {
       saveUser(me.data);
 
       router.push('/');
-    } catch (err: any) {
+    } catch (err) {
       console.error('Login error:', err);
       removeToken();
-      setError(err.response?.data?.error || 'Invalid email or password');
+      setError(getErrorMessage(err, 'Invalid email or password'));
       setLoading(false);
     }
   };
@@ -53,7 +52,7 @@ export default function LoginPage() {
   // Show loading until mounted (prevents hydration error)
   if (!mounted) {
     return (
-      <div className="flex items-center justify-center min-h-[calc(100vh-200px)]">
+      <div className="flex items-center justify-center min-h-screen bg-gray-50 p-4">
         <Card className="w-full max-w-md">
           <CardContent className="pt-6">
             <div className="text-center text-gray-600">Loading...</div>
@@ -64,9 +63,9 @@ export default function LoginPage() {
   }
 
   // After mounted, check if already logged in
-  if (isAuthenticated()) {
+  if (isLoggedIn) {
     return (
-      <div className="flex items-center justify-center min-h-[calc(100vh-200px)]">
+      <div className="flex items-center justify-center min-h-screen bg-gray-50 p-4">
         <Card className="w-full max-w-md">
           <CardContent className="pt-6">
             <div className="text-center text-gray-600">Redirecting to dashboard...</div>
@@ -77,12 +76,12 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex items-center justify-center min-h-[calc(100vh-200px)]">
+    <div className="flex items-center justify-center min-h-screen bg-gray-50 p-4">
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-1">
-          <CardTitle className="text-2xl font-bold">Login</CardTitle>
+          <CardTitle className="text-2xl font-bold">Log in</CardTitle>
           <CardDescription>
-            Enter your credentials to access the dashboard
+            Welcome back. Log in to manage your tests and results.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -98,7 +97,7 @@ export default function LoginPage() {
               <Input
                 id="email"
                 type="email"
-                placeholder="admin@example.com"
+                placeholder="you@example.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
@@ -118,7 +117,7 @@ export default function LoginPage() {
             </div>
 
             <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? 'Logging in...' : 'Login'}
+              {loading ? 'Logging in...' : 'Log in'}
             </Button>
 
             <p className="text-center text-sm text-gray-600">

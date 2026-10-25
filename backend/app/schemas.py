@@ -34,10 +34,6 @@ class Token(BaseModel):
     access_token: str
     token_type: str
 
-# Token Data
-class TokenData(BaseModel):
-    user_id: Optional[int] = None
-
 # Role Schemas
 class RoleBase(BaseModel):
     role_name: str

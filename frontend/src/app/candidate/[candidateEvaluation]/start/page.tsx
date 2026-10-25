@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { Toaster, toast } from 'react-hot-toast';
-import { getAttempt, saveAttemptAnswers, submitAttempt } from '@/lib/api';
+import { getAttempt, saveAttemptAnswers, submitAttempt, getErrorMessage, getErrorStatus } from '@/lib/api';
 import { AttemptState, clearAttemptToken, getAttemptToken } from '@/lib/candidate';
 import { TestHeader, SaveState } from '@/components/candidate/TestHeader';
 import { QuestionCard } from '@/components/candidate/QuestionCard';
@@ -13,6 +13,7 @@ import { SuccessScreen } from '@/components/candidate/SuccessScreen';
 import { StatusScreen } from '@/components/candidate/StatusScreen';
 import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { usePageTitle } from '@/lib/auth';
 
 type ViewState = 'loading' | 'testing' | 'review' | 'finished' | 'error';
 
@@ -32,6 +33,7 @@ export default function CandidateTestPage() {
     const [submitting, setSubmitting] = useState(false);
     const [saveState, setSaveState] = useState<SaveState>('idle');
     const [remaining, setRemaining] = useState(0);
+    usePageTitle(attempt?.test_name || 'Test');
     const [finished, setFinished] = useState<{ status: 'submitted' | 'timed_out' | 'pending'; answered: number; total: number } | null>(null);
 
     const tokenRef = useRef<string | null>(null);
@@ -83,9 +85,9 @@ export default function CandidateTestPage() {
                 setCurrentIdx(firstOpen === -1 ? 0 : firstOpen);
                 setView('testing');
             }
-        } catch (err: any) {
+        } catch (err) {
             if (isResync) return;  // Keep the local countdown; the next resync will try again
-            if (err.response?.status === 404) {
+            if (getErrorStatus(err) === 404) {
                 clearAttemptToken(testCode);
                 router.replace(`/candidate/${testCode}`);
                 return;
@@ -126,15 +128,15 @@ export default function CandidateTestPage() {
                 const res = await submitAttempt(token, answersRef.current);
                 showFinished(res.data);
                 return;
-            } catch (err: any) {
-                const status = err.response?.status;
+            } catch (err) {
+                const status = getErrorStatus(err);
                 if (status === 404) {
                     clearAttemptToken(testCode);
                     router.replace(`/candidate/${testCode}`);
                     return;
                 }
                 if (status && status < 500) {
-                    toast.error(err.response?.data?.error || 'Could not submit your test.');
+                    toast.error(getErrorMessage(err, 'Could not submit your test.'));
                     break;
                 }
                 // Network or server error: wait and try again
@@ -199,8 +201,8 @@ export default function CandidateTestPage() {
         try {
             await saveAttemptAnswers(token, answersRef.current);
             setSaveState('saved');
-        } catch (err: any) {
-            const status = err.response?.status;
+        } catch (err) {
+            const status = getErrorStatus(err);
             if (status === 409) {
                 // Time is up or already submitted: finish with what the server has
                 s.inFlight = false;

@@ -2,7 +2,7 @@
 
 import { useState, useRef } from 'react';
 import { Button } from "@/components/ui/button";
-import { createQuestion } from '@/lib/api';
+import { createQuestion, getErrorMessage } from '@/lib/api';
 import { Subject } from '@/lib/subjects';
 import { AlertCircle, Upload, FileDown, CheckCircle } from 'lucide-react';
 
@@ -127,8 +127,8 @@ export function BulkUpload({ subjects, onUploadComplete }: BulkUploadProps) {
                             difficulty
                         });
                         successCount++;
-                    } catch (err: any) {
-                        errors.push(`Row ${line}: ${err.response?.data?.error || 'failed to save'}`);
+                    } catch (err) {
+                        errors.push(`Row ${line}: ${getErrorMessage(err, 'failed to save')}`);
                     }
                 }
 

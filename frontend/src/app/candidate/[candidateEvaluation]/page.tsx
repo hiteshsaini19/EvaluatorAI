@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { getAttempt, getPublicTest, startAttempt } from '@/lib/api';
+import { getAttempt, getPublicTest, startAttempt, getErrorMessage, getErrorCode, getErrorStatus } from '@/lib/api';
 import { PublicTestInfo, clearAttemptToken, getAttemptToken, saveAttemptToken } from '@/lib/candidate';
 import { CandidateInfoForm } from '@/components/candidate/CandidateInfoForm';
 import { StatusScreen } from '@/components/candidate/StatusScreen';
 import { Loader2 } from 'lucide-react';
+import { usePageTitle } from '@/lib/auth';
 
 type Screen = 'loading' | 'form' | 'invalid' | 'expired' | 'already_attempted' | 'error';
 
@@ -22,6 +23,7 @@ export default function CandidateEntryPage() {
     const [starting, setStarting] = useState(false);
     // On an expired link, someone who already started can still continue with their email
     const [resumeOnExpired, setResumeOnExpired] = useState(false);
+    usePageTitle(test?.test_name || 'Test');
 
     useEffect(() => {
         if (!testCode) return;
@@ -38,10 +40,10 @@ export default function CandidateEntryPage() {
                     }
                     // Finished: forget it and show the form; the same email is told it already took the test
                     clearAttemptToken(testCode);
-                } catch (err: any) {
+                } catch (err) {
                     // Unknown token (e.g. the result was deleted): start fresh. Otherwise keep it and
                     // fall through; entering the same email resumes the attempt anyway.
-                    if (err.response?.status === 404) clearAttemptToken(testCode);
+                    if (getErrorStatus(err) === 404) clearAttemptToken(testCode);
                 }
             }
 
@@ -49,8 +51,8 @@ export default function CandidateEntryPage() {
                 const res = await getPublicTest(testCode);
                 setTest(res.data);
                 setScreen(res.data.is_expired ? 'expired' : 'form');
-            } catch (err: any) {
-                if (err.response?.status === 404) {
+            } catch (err) {
+                if (getErrorStatus(err) === 404) {
                     setScreen('invalid');
                 } else {
                     setMessage('We couldn\'t load this test. Check your connection and try again.');
@@ -68,15 +70,15 @@ export default function CandidateEntryPage() {
             const res = await startAttempt(testCode, data);
             saveAttemptToken(testCode, res.data.attempt_token);
             router.push(`/candidate/${testCode}/start`);
-        } catch (err: any) {
-            const code = err.response?.data?.code;
+        } catch (err) {
+            const code = getErrorCode(err);
             if (code === 'already_attempted') setScreen('already_attempted');
             else if (code === 'expired') {
                 setResumeOnExpired(false);
                 setScreen('expired');
                 if (resumeOnExpired) setMessage('No test in progress was found for this email.');
             } else if (code === 'not_found') setScreen('invalid');
-            else setFormError(err.response?.data?.error || 'Could not start the test. Check your connection and try again.');
+            else setFormError(getErrorMessage(err, 'Could not start the test. Check your connection and try again.'));
             setStarting(false);
         }
     };

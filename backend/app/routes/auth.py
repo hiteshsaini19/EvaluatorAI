@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from datetime import timedelta
 from app import models, schemas
 from app.database import get_db
+from app.rate_limit import login_limiter, signup_limiter
 from app.auth import (
     verify_password,
     hash_password,
@@ -24,7 +25,8 @@ def issue_token(user: models.User) -> dict:
 
 
 # Sign up endpoint - Public, always creates a Creator
-@router.post("/signup", response_model=schemas.Token, status_code=status.HTTP_201_CREATED)
+@router.post("/signup", response_model=schemas.Token, status_code=status.HTTP_201_CREATED,
+             dependencies=[Depends(signup_limiter)])
 def signup(user_data: schemas.UserSignup, db: Session = Depends(get_db)):
 
     existing_user = db.query(models.User).filter(models.User.email == user_data.email).first()
@@ -61,7 +63,7 @@ def signup(user_data: schemas.UserSignup, db: Session = Depends(get_db)):
 
 
 # Login endpoint
-@router.post("/login", response_model=schemas.Token)
+@router.post("/login", response_model=schemas.Token, dependencies=[Depends(login_limiter)])
 def login(user_credentials: schemas.UserLogin, db: Session = Depends(get_db)):
 
     # Find user by email (emails are stored lowercase)

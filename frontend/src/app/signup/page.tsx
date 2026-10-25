@@ -7,8 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { signup, getMe } from '@/lib/api';
-import { saveToken, saveUser, removeToken, isAuthenticated } from '@/lib/auth';
+import { signup, getMe, getErrorMessage } from '@/lib/api';
+import { saveToken, saveUser, removeToken, useIsClient, useIsLoggedIn, usePageTitle } from '@/lib/auth';
 
 const MIN_PASSWORD = 8;
 const MAX_PASSWORD = 72;
@@ -20,15 +20,14 @@ export default function SignupPage() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [mounted, setMounted] = useState(false);
+  const mounted = useIsClient();
+  const isLoggedIn = useIsLoggedIn();
   const router = useRouter();
+  usePageTitle('Sign up');
 
   useEffect(() => {
-    setMounted(true);
-    if (isAuthenticated()) {
-      router.push('/');
-    }
-  }, [router]);
+    if (isLoggedIn) router.push('/');
+  }, [isLoggedIn, router]);
 
   const validate = (): string | null => {
     if (!name.trim()) return 'Please enter your name';
@@ -57,15 +56,15 @@ export default function SignupPage() {
       saveUser(me.data);
 
       router.push('/');
-    } catch (err: any) {
+    } catch (err) {
       console.error('Sign-up error:', err);
       removeToken();
-      setError(err.response?.data?.error || 'Could not create your account. Please try again.');
+      setError(getErrorMessage(err, 'Could not create your account. Please try again.'));
       setLoading(false);
     }
   };
 
-  if (!mounted || isAuthenticated()) {
+  if (!mounted || isLoggedIn) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="text-center text-gray-600">Loading...</div>

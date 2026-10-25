@@ -1,28 +1,47 @@
 # EvaluatorAI
 
-EvaluatorAI is an interview test platform. Test creators sign up, build a test from subjects in the catalogue, and share the test link with candidates. Candidates take the test in the browser, and answers are scored automatically for the creator to review.
+EvaluatorAI is a free tool for creating timed multiple-choice tests to screen candidates. A test creator picks subjects, difficulty and a time limit, AI writes the questions, and the creator shares one link. Candidates take the test in the browser, and the creator sees each score and a per-question breakdown.
 
-The platform is being turned into a free, public, AI-powered test generator in phases. See [PROJECT_PLAN.md](PROJECT_PLAN.md) for the plan and current status.
+It is designed to run at zero cost on free tiers (Gemini API, Neon, Render, Vercel). Progress and plans are in [PROJECT_PLAN.md](PROJECT_PLAN.md) and [CHANGELOG.md](CHANGELOG.md).
 
-## Repository layout
+## How it works
 
-```
-backend/    FastAPI + SQLAlchemy + PostgreSQL API (Alembic migrations, JWT auth)
-frontend/   Next.js 16 + React 19 + Tailwind admin dashboard and candidate test pages
-render.yaml Render blueprint for the backend (rootDir: backend)
-```
+**Test creators**
+1. Sign up with name, email and password.
+2. Create a test: choose subjects (24 in 8 groups), difficulty (Easy, Medium, Hard or a mix), number of questions, test duration and how long the link stays open.
+3. Review the questions with their correct answers and explanations, and remove any you don't want (until the first candidate starts).
+4. Share the link, then follow results: status, score, unanswered questions, time used and every answer.
+
+**Candidates**
+1. Open the link and enter name and email. The timer starts when the server confirms the start.
+2. Answer at their own pace. Answers save automatically, a refresh resumes the test with the right time left, and the test submits itself when time runs out.
+3. One attempt per email per test.
+
+**Admin** (the platform owner, created by `seed.py` only) manages the example question bank the AI uses as style examples, and can see all tests and results.
 
 ## Features
 
-- Public sign-up for test creators (email + password), JWT login; Admin accounts come from `seed.py` only
-- Each creator sees only their own tests and results; Admin sees everything
-- Fixed catalogue of 24 subjects in 8 groups, each with a topic scope and Easy/Medium/Hard rubric (`backend/app/data/subjects.py`)
-- Example question bank (Admin): 144 starter questions, create, edit, delete, filter by group/subject/difficulty, search, CSV bulk import
-- AI test generation: pick subjects, difficulties, number of questions, duration and link validity, and one click writes the test using each subject's scope and difficulty rubric, with example questions as style guides. Answers are checked, de-duplicated and spread evenly across A–D, with daily limits per creator and overall. Without an AI key, questions are drawn from the example bank. Each test gets a unique `TEST-XXXXXXXX` code and link
-- View a test with correct answers and remove questions until the first candidate starts
-- Candidate flow: name/email entry, server-enforced countdown, answers saved as you go, refresh resumes, auto-submit when time runs out, one attempt per email
-- Link validity: an expired link blocks new candidates while anyone mid-test can finish
-- Results: status (submitted / timed out / in progress), score, unanswered count, time used and a per-question breakdown
+- **AI test generation:** one click generates the whole test from each subject's scope and Easy/Medium/Hard rubric, with example questions as style guides. Every question is checked (4 options, one valid answer, no duplicates), and correct answers are spread evenly across A–D. Large tests are split into parallel requests, short results get one follow-up request, and failures save nothing.
+- **Daily AI limits** per creator and overall, to stay inside the provider's free quota. Without an AI key, questions are drawn from the example bank instead.
+- **Two timers, enforced on the server:** the test duration (per candidate, auto-submit at zero) and the link validity (blocks new candidates, lets anyone mid-test finish). There are no background jobs; expired attempts are closed when next read.
+- **Candidate test screen:** countdown based on the server deadline (changing the computer clock doesn't help), warnings at 5 and 1 minute, auto-save, resume, code blocks shown in monospace, and a phone-friendly layout.
+- **Ownership:** creators only ever see their own tests and results.
+- **Example question bank** (Admin): 144 starter questions, filters by group/subject/difficulty, search, and CSV import.
+- **Hardening:**
+  - per-IP rate limits on login (10 per 5 minutes) and sign-up (5 per hour);
+  - CORS limited to the configured frontend;
+  - "waking up the server" notice for the free plan's cold starts;
+  - a `/health` endpoint.
+
+## Tech stack
+
+```
+backend/    FastAPI, SQLAlchemy, PostgreSQL, Alembic, JWT auth, bcrypt
+frontend/   Next.js 16, React 19, TypeScript, Tailwind CSS
+render.yaml Render blueprint for the backend (rootDir: backend)
+```
+
+The AI client talks to any OpenAI-compatible chat completions API using only the Python standard library. Google Gemini is the default; Groq, OpenRouter or another endpoint work by changing environment variables.
 
 ## Local setup
 
@@ -57,21 +76,36 @@ DATABASE_URL=postgresql://postgres:YOUR_PG_PASSWORD@localhost:5432/interview_tes
 SECRET_KEY=change-me-to-any-long-random-string
 ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=60
+
+# AI generation (leave AI_API_KEY empty to use the example question bank)
+AI_PROVIDER=gemini
+AI_MODEL=gemini-3.8-flash
+AI_API_KEY=
+AI_DAILY_LIMIT_PER_USER=5
+AI_DAILY_LIMIT_GLOBAL=50
 ```
 
-To let AI write the questions, add these lines too (without a key, tests are drawn from the example question bank):
+| Variable | Default | Purpose |
+|---|---|---|
+| `DATABASE_URL` | required | PostgreSQL connection string (`postgres://` URLs are accepted too) |
+| `SECRET_KEY`, `ALGORITHM`, `ACCESS_TOKEN_EXPIRE_MINUTES` | required | JWT signing and session length |
+| `FRONTEND_URL` | none | Deployed frontend address(es), comma-separated, allowed by CORS. `http://localhost:3000` is always allowed |
+| `AI_PROVIDER` | `gemini` | `gemini`, `groq` or `openrouter` |
+| `AI_MODEL` | provider default | `gemini-3.8-flash` for Gemini, `openai/gpt-oss-120b` for Groq. Required for OpenRouter |
+| `AI_API_KEY` | empty | Gemini keys: https://aistudio.google.com/apikey. Empty = use the question bank |
+| `AI_BASE_URL` | provider default | Any other OpenAI-compatible endpoint |
+| `AI_DAILY_LIMIT_PER_USER` | 5 | Successful AI tests per creator per day (Admin has no limit) |
+| `AI_DAILY_LIMIT_GLOBAL` | 50 | AI attempts per day for everyone; keep it inside the provider's free quota |
+| `AI_TIMEOUT_SECONDS` | 90 | Time limit per AI request |
+| `AI_QUESTIONS_PER_CALL` | 20 | Bigger tests are split into several requests |
+| `AI_MAX_PARALLEL_CALLS` | 3 | Requests run at the same time |
+| `AI_MAX_OUTPUT_TOKENS` | 16000 | Reply length limit per request |
+| `AI_RESPONSE_FORMAT` | `json_object` | Set to `none` for providers that reject JSON mode |
+| `SQL_ECHO` | `false` | `true` logs every SQL statement |
 
-```
-AI_PROVIDER=gemini            # gemini, groq or openrouter (all called through their OpenAI-compatible API)
-AI_MODEL=gemini-3.8-flash     # optional for gemini and groq, which have defaults
-AI_API_KEY=your-key           # Gemini: create one at https://aistudio.google.com/apikey
-AI_DAILY_LIMIT_PER_USER=5     # AI tests per creator per day (Admin has no limit)
-AI_DAILY_LIMIT_GLOBAL=50      # AI attempts per day for everyone; keep it inside the provider's free quota
-```
+Daily AI limits reset at 00:00 UTC.
 
-Optional tuning: `AI_BASE_URL` (any other OpenAI-compatible endpoint), `AI_TIMEOUT_SECONDS` (90), `AI_QUESTIONS_PER_CALL` (20; bigger tests are split into several requests), `AI_MAX_PARALLEL_CALLS` (3), `AI_MAX_OUTPUT_TOKENS` (16000) and `AI_RESPONSE_FORMAT` (`json_object`, or `none` for providers that reject it). Daily limits reset at 00:00 UTC.
-
-The database schema is managed only by Alembic, so run the migrations before starting the server (and again after pulling changes that add migrations). Then seed:
+The schema is managed only by Alembic. Run the migrations before starting the server (and again after pulling changes that add migrations), then seed:
 
 ```powershell
 .\venv\Scripts\alembic upgrade head
@@ -79,9 +113,9 @@ The database schema is managed only by Alembic, so run the migrations before sta
 .\venv\Scripts\uvicorn app.main:app --reload --port 8000
 ```
 
-API docs: http://localhost:8000/docs
+API docs: http://localhost:8000/docs. Health check: http://localhost:8000/health.
 
-`seed.py` is safe to re-run. It creates the roles, the subject catalogue (updating scopes and rubrics when `subjects.py` changes), the starter example questions (`backend/app/data/example_questions.py`, skipping ones already present) and two demo users (change these before any real deployment):
+`seed.py` is safe to re-run. It creates the roles, the subject catalogue (updating scopes and rubrics when `backend/app/data/subjects.py` changes), the starter example questions (`backend/app/data/example_questions.py`) and two demo users. Change their passwords before any real deployment:
 
 | Role | Email | Password |
 |---|---|---|
@@ -105,10 +139,22 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 npm run dev
 ```
 
-Open http://localhost:3000. The frontend must run on port 3000 locally, because the backend's CORS list only allows that origin (see `backend/app/main.py`).
+Open http://localhost:3000. The frontend must run on port 3000 locally, because that's the origin the backend allows by default.
+
+## Main API endpoints
+
+| Area | Endpoints |
+|---|---|
+| Accounts | `POST /auth/signup`, `POST /auth/login`, `GET /auth/me` |
+| Catalogue | `GET /subjects/`; Admin: `/questions/` (CRUD, filters, search) |
+| Tests | `POST /tests/generate`, `GET /tests/generation-quota`, `GET /tests/my-tests`, `GET /tests/{code}`, `DELETE /tests/{id}/questions/{question_id}`, `DELETE /tests/{id}` |
+| Candidates (public) | `GET /public/tests/{code}`, `POST /public/tests/{code}/start`, `GET /public/attempts/{token}`, `PUT /public/attempts/{token}/answers`, `POST /public/attempts/{token}/submit` |
+| Results | `GET /candidates/results?test_code=`, `GET /candidates/result/{id}`, `DELETE /candidates/response/{id}` |
 
 ## Deployment
 
-- **Backend (Render):** `render.yaml` at the repo root defines the API service and a PostgreSQL database, with `rootDir: backend`.
-- **Frontend (Vercel):** import the repo, set **Root Directory** to `frontend`, and set `NEXT_PUBLIC_API_URL` to the backend URL.
-- Add the deployed frontend URL to `ALLOWED_ORIGINS` in `backend/app/main.py`.
+Deployment on free tiers is planned as the final step (see Phase 5 in [PROJECT_PLAN.md](PROJECT_PLAN.md)):
+
+- **Database:** Neon PostgreSQL.
+- **Backend:** Render free web service from `render.yaml`, with the environment variables above.
+- **Frontend:** Vercel with Root Directory `frontend` and `NEXT_PUBLIC_API_URL` set to the backend URL. Then set `FRONTEND_URL` on the backend to the Vercel address.

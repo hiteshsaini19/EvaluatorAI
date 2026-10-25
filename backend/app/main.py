@@ -4,22 +4,29 @@ from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from sqlalchemy import text
+from dotenv import load_dotenv
 from app.database import engine
 from app.routes import auth, roles, users, subjects, questions, test, candidates, public
+
+load_dotenv()
 
 # The schema is managed only by Alembic migrations: run `alembic upgrade head` before starting.
 
 app = FastAPI(title="EvaluatorAI API")
 
-ALLOWED_ORIGINS = [
-    "http://localhost:3000",  # Local development
-    "https://interview-test-platform-front-end.vercel.app",
-]
+
+def allowed_origins() -> list[str]:
+    # FRONTEND_URL holds the deployed frontend's address (several can be given, separated by commas).
+    # Local development on port 3000 is always allowed.
+    configured = [o.strip().rstrip("/") for o in os.getenv("FRONTEND_URL", "").split(",") if o.strip()]
+    return list(dict.fromkeys(["http://localhost:3000", *configured]))
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,  # Specific origins only
-    allow_credentials=True,  # Required for cookies/auth
+    allow_origins=allowed_origins(),  # Specific origins only
+    allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
     expose_headers=["*"],
@@ -115,43 +122,25 @@ app.include_router(public.router)
 
 @app.get("/")
 def read_root():
-    return {"status" : "ok", "message" : "EvaluatorAI API - dev server" }
+    return {"status": "ok", "message": "EvaluatorAI API"}
 
-class HelloIn(BaseModel):
-    name: str
 
-class HelloOut(BaseModel):
-    greeting: str
-
-@app.post("/hello", response_model= HelloOut)
-def say_hello(payload: HelloIn):
-    return {"greeting": f"Hello, {payload.name}! This endpoint works."}
-
-from app.database import engine
-@app.get("/test-db")
-def test_db_connnection():
+# Health check (also handy for an uptime monitor): reports whether the database answers
+@app.get("/health")
+def health():
     try:
-        with engine.connect () as conn:
-            return {"status": "sucess", "message": "Database connection Ok"}
-        
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return {"status": "ok", "database": "ok"}
+    except Exception:
+        return JSONResponse(status_code=503, content={"status": "error", "database": "unreachable"})
+
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 10000))  # defaults to 10000
     uvicorn.run(
         "app.main:app",
         host="0.0.0.0",
-        port=port,
+        port=int(os.getenv("PORT", 8000)),
         proxy_headers=True,
-        forwarded_allow_ips="*"
-    )
-    
-if __name__ == "__main__":
-
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(
-        "app.main:app",
-        host="0.0.0.0",
-        port=port
+        forwarded_allow_ips="*",
     )

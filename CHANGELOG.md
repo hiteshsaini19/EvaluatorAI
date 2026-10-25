@@ -8,8 +8,53 @@ To resume work, take the **first phase not marked Completed** below.
 | 1. Accounts and subjects | ✅ Completed | 2026-10-24 | `phase-1-accounts-subjects` |
 | 2. Test model, timers and candidate flow | ✅ Completed | 2026-10-25 | `phase-2-tests-timers-candidate-flow` |
 | 3. AI generation | ✅ Code completed (quality check needs the AI key) | 2026-10-25 | `phase-3-ai-generation` |
-| 4. Polish and hardening | ⏳ Next | — | — |
-| 5. Free deployment | Not started | — | — |
+| 4. Polish and hardening | ✅ Completed | 2026-10-25 | `phase-4-polish-hardening` |
+| 5. Free deployment | ⏳ Next (needs Neon, Render and Vercel accounts) | — | — |
+
+---
+
+## Phase 4: Polish and hardening (Completed 2026-10-25)
+
+### Added
+- **Phone layout for creator pages:** a top bar with a slide-in menu replaces the fixed sidebar below tablet width. My Tests and Results show one card per item on phones, with all actions visible. Page padding shrinks on small screens, and the top bar wraps and hides the user's name when space is tight.
+- **"Waking up the server" notice:** any request still pending after 5 seconds shows a small notice, because the free backend sleeps when idle. AI generation is excluded, since it's slow by nature and has its own message.
+- **Page titles and metadata:**
+  - Every page sets its browser tab title (e.g. "My Tests · EvaluatorAI", "Phone Tester · Results · EvaluatorAI").
+  - The landing page has a description, keywords and Open Graph tags, and there's a favicon.
+- **Rate limiting** (per IP, in memory):
+  - Login: 10 attempts per 5 minutes. Sign-up: 5 per hour.
+  - Answers 429 with a "please wait N minutes" message and a `Retry-After` header.
+  - Behind a proxy, the address the proxy added to `X-Forwarded-For` is used, not one the client can fake.
+- **`FRONTEND_URL`** (comma-separated) sets the allowed CORS origins; `http://localhost:3000` is always allowed.
+- **`GET /health`** reports whether the database answers, for checks and uptime monitors.
+- **`SQL_ECHO`:** SQL statement logging is now off by default.
+
+### Changed
+- **Password hashing** uses the `bcrypt` library directly instead of passlib. Existing hashes keep working, the "error reading bcrypt version" warning is gone, and passwords are cut to bcrypt's 72-byte limit explicitly.
+- **Error messages:** every page shows the API's own message or "Could not reach the server" through shared helpers. This replaces all `catch (err: any)` code.
+- **Login state** comes from a shared hook, replacing the "mounted" state pattern. Login and logout update the page immediately, including across tabs.
+- **Login page** uses the same full-page layout as sign-up.
+- The **Results pages** have the standard top bar, which adds Logout there.
+- The landing page says that AI writes the questions.
+- Both READMEs are rewritten for the current product: features, setup, a full table of environment variables, the main API endpoints, pages and code layout.
+- Packages: `npm audit fix` updated packages within their allowed versions (including axios with a high-severity fix, and Next.js 16.0 → 16.4.3).
+
+### Removed
+- Dead code: `Navbar.tsx`, the empty `middleware.ts`, six unused UI components (alert-dialog, dialog, form, pagination, select, textarea), the unused Tailwind v4 PostCSS config, the default Next.js SVGs, `backend/app/Start-Commands`, the `/hello` and `/test-db` endpoints, the duplicate `__main__` block, `require_self_or_admin` and `TokenData`.
+- Unused packages: `@hookform/resolvers`, `@radix-ui/react-alert-dialog`, `@radix-ui/react-dialog`, `@radix-ui/react-select`, `@shadcn/ui`, `css`, `react-hook-form`, `zod`, `@tailwindcss/postcss`, `@types/tailwindcss` and, on the backend, `passlib`.
+
+### Verified
+- `npm run lint` reports 0 problems (it had 33), and the type-check and production build pass.
+- In Chrome emulating a 390 px phone: landing, login, sign-up, candidate entry, the test screen, My Tests, Create Test, View, Results, result detail and the dashboard. None scroll sideways, and every one has the right tab title. The sample test and candidate used for this were deleted afterwards.
+- On a throwaway database:
+  - `/health`; CORS for configured, local and unknown origins;
+  - login with a hash created by passlib and with a new one (including a non-ASCII password);
+  - the 11th login and the 6th sign-up being blocked, with the client IP taken from the proxy header;
+  - no SQL or bcrypt warnings in the log.
+
+### Known, deferred
+- `npm audit` still lists one moderate issue in `postcss-selector-parser`, a build-time tool with no fix available yet; it doesn't run in the browser.
+- The "waking up the server" notice was checked in code but not seen live, since the local backend never sleeps. It will show on the free hosting in Phase 5.
 
 ---
 

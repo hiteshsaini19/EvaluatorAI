@@ -338,6 +338,13 @@ Each phase lists: goal, backend work, frontend work, data changes, what is out o
 
 **Verification:** walk through every page at desktop and phone widths, check behaviour on slow and failed requests, and run a production build.
 
+**Implementation notes (added after Phase 4 was built)**
+- Rate limits: login 10 per 5 minutes and sign-up 5 per hour per IP. Behind a proxy, the last `X-Forwarded-For` entry is used.
+- The "waking up" notice appears for any request still pending after 5 seconds, except AI generation.
+- Tab titles are set by a small hook. Next.js 16 streams the site-wide `<title>` in after the page loads, so the hook re-applies the page's title when that happens.
+- passlib was replaced by the `bcrypt` library (hash format unchanged), which removed the version warning.
+- `GET /health` was added for Render and uptime monitors in Phase 5. `FRONTEND_URL` accepts several comma-separated origins.
+
 ---
 
 ### Phase 5: Free deployment ⚠️ hosting accounts are needed here

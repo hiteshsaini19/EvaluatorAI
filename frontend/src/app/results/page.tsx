@@ -3,7 +3,8 @@
 import { Suspense, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { getResults, deleteResult } from '@/lib/api';
+import TopNav from '@/components/TopNav';
+import { getResults, deleteResult, getErrorMessage } from '@/lib/api';
 import { AttemptStatus, STATUS_LABELS, formatDateTime } from '@/lib/tests';
 import {
   Table,
@@ -33,9 +34,12 @@ interface Result {
 export default function ResultsPage() {
   // useSearchParams needs a Suspense boundary in the App Router
   return (
-    <Suspense fallback={<div className="p-8 text-gray-500">Loading results...</div>}>
-      <ResultsList />
-    </Suspense>
+    <>
+      <TopNav title="Results" subtitle="Candidate scores and answers" />
+      <Suspense fallback={<div className="p-8 text-gray-500">Loading results...</div>}>
+        <ResultsList />
+      </Suspense>
+    </>
   );
 }
 
@@ -51,7 +55,7 @@ function ResultsList() {
   useEffect(() => {
     getResults(testCode)
       .then(response => { setResults(response.data); setError(''); })
-      .catch((err: any) => setError(err.response?.data?.error || err.message || 'Failed to fetch results'))
+      .catch((err) => setError(getErrorMessage(err, 'Failed to fetch results')))
       .finally(() => setLoading(false));
   }, [testCode]);
 
@@ -61,8 +65,8 @@ function ResultsList() {
     try {
       await deleteResult(result.id);
       setResults(prev => prev.filter(r => r.id !== result.id));
-    } catch (err: any) {
-      alert('Failed to delete result: ' + (err.response?.data?.error || err.message));
+    } catch (err) {
+      alert('Failed to delete result: ' + getErrorMessage(err, 'unknown error'));
     }
   };
 
@@ -77,7 +81,7 @@ function ResultsList() {
 
   if (error) {
     return (
-      <div className="p-8">
+      <div className="p-4 sm:p-8">
         <Card className="border-red-200 bg-red-50/50">
           <CardContent className="pt-6">
             <p className="font-bold text-red-700">Error</p>
@@ -92,7 +96,7 @@ function ResultsList() {
   const filteredName = testCode ? (results[0]?.test_name || testCode) : null;
 
   return (
-    <div className="max-w-7xl mx-auto space-y-6 py-8 px-8">
+    <div className="max-w-7xl mx-auto space-y-6 p-4 sm:p-8">
       <div className="space-y-1">
         <h1 className="text-3xl font-extrabold tracking-tight text-gray-900">Results</h1>
         {testCode ? (
@@ -105,7 +109,46 @@ function ResultsList() {
         )}
       </div>
 
-      <Card className="border-gray-200 shadow-xl overflow-hidden rounded-xl bg-white">
+      {/* Phones: one card per result */}
+      <div className="md:hidden space-y-3">
+        {results.length === 0 ? (
+          <Card>
+            <CardContent className="py-10 text-center text-gray-400">
+              <p className="font-medium">No results yet</p>
+              <p className="text-sm">Share a test link; results appear here as candidates take it.</p>
+            </CardContent>
+          </Card>
+        ) : results.map((r) => {
+          const status = STATUS_LABELS[r.status];
+          return (
+            <Card key={r.id}>
+              <CardContent className="p-4 space-y-2">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="font-bold text-gray-900">{r.name}</div>
+                    <div className="text-xs text-gray-500 break-all">{r.email}</div>
+                  </div>
+                  <span className={`shrink-0 inline-flex px-2.5 py-0.5 text-[11px] font-bold rounded-full ring-1 ring-inset ${status.className}`}>
+                    {status.label}
+                  </span>
+                </div>
+                <div className="text-sm text-gray-700">{r.test_name || r.test_code}</div>
+                <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-600">
+                  <span>Score: <span className="font-bold text-gray-900">{r.score === null ? '—' : `${r.score} (${r.score_percentage}%)`}</span></span>
+                  <span>Unanswered: {r.unanswered_count}</span>
+                  <span>Time: {r.time_used_formatted}</span>
+                </div>
+                <div className="flex gap-5 pt-1 text-sm font-bold">
+                  <Link href={`/results/${r.id}`} className="text-blue-600">View</Link>
+                  <button onClick={() => handleDelete(r)} className="text-red-500">Delete</button>
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
+
+      <Card className="hidden md:block border-gray-200 shadow-xl overflow-hidden rounded-xl bg-white">
         <CardContent className="p-0 overflow-x-auto">
           <Table>
             <TableHeader className="bg-gray-50/50">
