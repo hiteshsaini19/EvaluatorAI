@@ -256,6 +256,16 @@ Each phase lists: goal, backend work, frontend work, data changes, what is out o
 
 **Verification:** a throwaway PostgreSQL instance with short durations (e.g. 1 minute) and short validity to watch both timers expire for real. Resume after a simulated refresh. Try submitting after the deadline, a second attempt with the same email, and editing after a start. Build the frontend and walk through the candidate and creator pages.
 
+**Implementation notes (added after Phase 2 was built)**
+- Leftover difficulty slots rotate from subject to subject (instead of always going to the first difficulty), so a many-subject test stays balanced across Easy/Medium/Hard.
+- The number of questions must be at least the number of subjects, so every chosen subject gets a question.
+- A custom link expiry can be up to one year ahead.
+- A submit that arrives during the 15-second grace after the deadline (the auto-submit) is accepted with its final answers and recorded as **timed out**; before the deadline it is **submitted**.
+- Results also list attempts that are **in progress**, with a live score on the detail page; deleting one lets that candidate start again.
+- Once an attempt is finished, the browser forgets its token, so a shared computer doesn't greet the next candidate with "already taken". The server still blocks a second attempt with the same email.
+- A test keeps at least one question; removing the last one is refused.
+- `responses.time_taken` and `answered_at` are replaced by `started_at` / `submitted_at`. The migration converts old tests and results and keeps only the first submission when a candidate had submitted the same test twice.
+
 ---
 
 ### Phase 3: AI generation ⚠️ the AI API key is needed here

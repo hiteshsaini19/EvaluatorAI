@@ -6,10 +6,56 @@ To resume work, take the **first phase not marked Completed** below.
 | Phase | Status | Completed on | Branch |
 |---|---|---|---|
 | 1. Accounts and subjects | ✅ Completed | 2026-10-24 | `phase-1-accounts-subjects` |
-| 2. Test model, timers and candidate flow | ⏳ Next | — | — |
-| 3. AI generation | Not started | — | — |
+| 2. Test model, timers and candidate flow | ✅ Completed | 2026-10-25 | `phase-2-tests-timers-candidate-flow` |
+| 3. AI generation | ⏳ Next | — | — |
 | 4. Polish and hardening | Not started | — | — |
 | 5. Free deployment | Not started | — | — |
+
+---
+
+## Phase 2: Test model, timers and candidate flow (Completed 2026-10-25)
+
+### Added
+- **Generate a test:** `POST /tests/generate` takes a name, subjects, difficulties, number of questions (5–100), duration (5–180 minutes) and link validity (1–720 hours, or a custom date up to a year ahead). Subjects must be active, and there must be at least one question per subject.
+- **Question blueprint** (`backend/app/generation.py`): the exact number of questions per (subject, difficulty). Questions are split evenly across subjects, then across difficulties. Leftover difficulty slots rotate from subject to subject so the overall mix stays balanced.
+- **Generator interface** with a **bank generator** that picks random example questions per cell. When the bank is short it uses what it has, and the creator sees which subject/difficulty fell short (the starter bank has 2 per cell). The AI generator plugs in here in Phase 3.
+- **New question snapshot:** each test question has its own id, subject, difficulty, options A–D, answer and an (empty for now) explanation.
+- **Remove a question:** `DELETE /tests/{id}/questions/{question_id}` (owner or Admin). Returns 409 once any candidate has started; a test keeps at least one question.
+- **Candidate API** (`/public/...`, no login): test info, start (or resume) by name and email, resume by attempt token, auto-save answers, submit. One attempt per email per test, enforced by a database constraint.
+- **Server-enforced timers** (`backend/app/attempts.py`):
+  - Test duration: the deadline is set when the server confirms the start. Answers are rejected after the deadline; submit is accepted for 15 seconds more for slow networks, and after that the attempt closes as timed out with its saved answers.
+  - Link validity: an expired link blocks new starts, but anyone already mid-test can resume and finish.
+  - Expired attempts are finalised lazily whenever an attempt or a results list is read (no background workers on free hosting).
+- **Create Test page** (`/tests/new`): grouped subject chips with "Select all" per group, difficulty checkboxes, duration, a question count that follows the duration until edited, and validity presets (1 / 3 / 7 days or a custom date and time). Generate shows a progress state, then the link with Share and View buttons, plus a warning if the bank was short.
+- **View page** (`/tests/{code}`): link and test details, every question with subject, difficulty, options, the correct answer highlighted and the explanation, and a Remove button with confirmation that is disabled with a note once a candidate has started.
+- **Candidate pages:**
+  - Entry screen with test name, subjects, number of questions, duration, expiry note and the rules. Separate screens for an invalid link, an expired link (with "Already started? Continue with your email") and an already-taken test.
+  - Test screen with a countdown computed from the server deadline using the browser's monotonic clock, so changing the computer clock has no effect. It re-syncs when the tab becomes visible again, warns at 5 minutes and 1 minute, and auto-submits at 0.
+  - Each answer is saved automatically (one request at a time, retried on network errors, with a Saved / Not saved indicator). A refresh resumes at the first unanswered question with the correct time left. Answers can be cleared.
+  - Unanswered questions are allowed; the review screen shows how many and the time left.
+  - Code blocks in questions and options are shown in monospace with their indentation kept; `inline code` is formatted too.
+  - Phone layout: compact question strip instead of the side navigator, smaller paddings.
+- **Results:** status (Submitted / Timed out / In progress), unanswered count and time used in the list and detail pages. The list can be filtered by test (`/results?test=CODE`), linked from My Tests and the View page. The detail page marks unanswered questions and shows explanations.
+- **Database migration** `d41f8c2b7a90`: adds the test settings, turns responses into attempts (token, status, start, deadline, submit time, answers as `{question id: option}`), converts existing tests and results to the new format, and has a working downgrade.
+
+### Changed
+- **My Tests** shows subjects, questions, duration, Active/Expired status with time left, attempts, and the actions Share, View, Results and Delete. Newest first.
+- **Scoring** is calculated from the test snapshot and the saved answers; unanswered questions count as wrong.
+- **Finished screen** no longer claims a confirmation email was sent. It says whether the test was submitted or timed out and how many questions were answered.
+- Validation errors for numbers, choices and dates now give the real reason (e.g. "num_questions must be at least 5").
+- Existing data during the migration:
+  - Existing tests get a duration of 30 minutes (or one minute per question if more, up to 180) and a link valid for 7 days from the migration.
+  - Existing results become submitted attempts. If a candidate had submitted the same test more than once, only the first submission is kept.
+
+### Removed
+- The manual test builder (`TestBuilder.tsx`) and `POST /tests/create`.
+- `GET /candidates/test/{code}`, `POST /candidates/submit` and the "every question must be answered" rule.
+- `responses.time_taken` and `responses.answered_at` (replaced by `started_at` / `submitted_at`; time used is calculated).
+
+### Known, deferred
+- Until Phase 3, most tests come out shorter than requested, because the starter bank has only 2 questions per subject and difficulty.
+- An attempt can be resumed on another device by entering the same email on the test link. This is intended (candidates have no login), but anyone who knows a candidate's email and the link could continue their test.
+- Lint: the new pages follow the existing `catch (err: any)` pattern; this and the older warnings are left for Phase 4.
 
 ---
 

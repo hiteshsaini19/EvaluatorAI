@@ -5,18 +5,21 @@ import { useParams, useRouter } from 'next/navigation';
 import { getResultDetail } from '@/lib/api';
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { ChevronLeft, CheckCircle2, XCircle, Clock, Mail, User, FileText, Calendar } from 'lucide-react';
+import { ChevronLeft, CheckCircle2, XCircle, Clock, Mail, User, FileText, Calendar, MinusCircle } from 'lucide-react';
 import Link from 'next/link';
+import { FormattedText } from '@/components/FormattedText';
+import { AttemptStatus, STATUS_LABELS, difficultyBadgeClass, formatMinutes } from '@/lib/tests';
 
 interface QuestionBreakdown {
     question_id: string;
     question_text: string;
-    selected_option: string;
+    selected_option: string | null;
     correct_option: string;
     is_correct: boolean;
     options: Record<string, string>;
     difficulty: string;
-    category_name: string;
+    subject_name: string;
+    explanation: string;
 }
 
 interface CandidateDetail {
@@ -26,12 +29,16 @@ interface CandidateDetail {
     test_id: number;
     test_code: string;
     test_name: string;
-    time_taken: number;
-    time_taken_formatted: string;
+    status: AttemptStatus;
+    time_used: number;
+    time_used_formatted: string;
+    duration_minutes: number;
     total_questions: number;
     correct_answers: number;
+    unanswered_count: number;
     score: number;
-    created_at: string;
+    started_at: string;
+    submitted_at: string | null;
 }
 
 interface ResultData {
@@ -58,7 +65,7 @@ export default function ResultDetailPage() {
             setData(response.data);
             setLoading(false);
         } catch (err: any) {
-            setError(err.message || 'Failed to fetch result details');
+            setError(err.response?.data?.error || err.message || 'Failed to fetch result details');
             setLoading(false);
         }
     };
@@ -103,14 +110,17 @@ export default function ResultDetailPage() {
 
     const { candidate, responses } = data;
 
-    // Group responses by category
-    const groupedResponses = responses.reduce((acc, curr) => {
-        if (!acc[curr.category_name]) {
-            acc[curr.category_name] = [];
+    const status = STATUS_LABELS[candidate.status];
+    const inProgress = candidate.status === 'in_progress';
+
+    // Group responses by subject, keeping the question numbers from the test
+    const groupedResponses = responses.reduce((acc, curr, idx) => {
+        if (!acc[curr.subject_name]) {
+            acc[curr.subject_name] = [];
         }
-        acc[curr.category_name].push(curr);
+        acc[curr.subject_name].push({ ...curr, number: idx + 1 });
         return acc;
-    }, {} as Record<string, QuestionBreakdown[]>);
+    }, {} as Record<string, (QuestionBreakdown & { number: number })[]>);
 
     const getScoreColor = (score: number) => {
         if (score >= 70) return 'bg-green-50 text-green-700 border-green-200';
@@ -164,17 +174,37 @@ export default function ResultDetailPage() {
                                         </p>
                                     </div>
                                     <div className="space-y-1">
-                                        <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">Submitted At</p>
-                                        <p className="text-base font-medium text-gray-600 flex items-center gap-2">
-                                            <Calendar className="w-4 h-4 text-gray-400" />
-                                            {formatDate(candidate.created_at)}
+                                        <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">Status</p>
+                                        <span className={`inline-flex px-2.5 py-0.5 text-xs font-bold rounded-full ring-1 ring-inset ${status.className}`}>
+                                            {status.label}
+                                        </span>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">Unanswered</p>
+                                        <p className="text-base font-bold text-gray-900">
+                                            {candidate.unanswered_count} of {candidate.total_questions}
                                         </p>
                                     </div>
                                     <div className="space-y-1">
-                                        <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">Time Taken</p>
+                                        <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">Started At</p>
+                                        <p className="text-base font-medium text-gray-600 flex items-center gap-2">
+                                            <Calendar className="w-4 h-4 text-gray-400" />
+                                            {formatDate(candidate.started_at)}
+                                        </p>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">Finished At</p>
+                                        <p className="text-base font-medium text-gray-600 flex items-center gap-2">
+                                            <Calendar className="w-4 h-4 text-gray-400" />
+                                            {candidate.submitted_at ? formatDate(candidate.submitted_at) : 'Not yet'}
+                                        </p>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">Time Used</p>
                                         <p className="text-base font-bold text-gray-900 flex items-center gap-2">
                                             <Clock className="w-4 h-4 text-gray-400" />
-                                            {candidate.time_taken_formatted}
+                                            {candidate.time_used_formatted}
+                                            <span className="text-sm font-medium text-gray-500">of {formatMinutes(candidate.duration_minutes)}</span>
                                         </p>
                                     </div>
                                 </div>
@@ -187,24 +217,26 @@ export default function ResultDetailPage() {
                                         {candidate.test_code}
                                     </code>
                                 </div>
-                                <div className="flex items-center gap-2">
-                                    <span className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">Test Created:</span>
-                                    <span className="text-sm font-medium text-gray-600">{formatDate(candidate.created_at)}</span>
-                                </div>
+                                {candidate.test_name && (
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">Test:</span>
+                                        <span className="text-sm font-medium text-gray-600">{candidate.test_name}</span>
+                                    </div>
+                                )}
                             </div>
                         </div>
 
                         {/* Right: Score Card */}
                         <div className="bg-gray-50/50 p-8 flex items-center justify-center border-l border-gray-100">
                             <div className={`w-full max-w-[280px] aspect-square rounded-3xl border-2 flex flex-col items-center justify-center shadow-lg transition-all hover:scale-[1.02] ${getScoreColor(candidate.score)}`}>
-                                <span className="text-[13px] font-bold uppercase tracking-[0.2em] mb-2">Final Score</span>
+                                <span className="text-[13px] font-bold uppercase tracking-[0.2em] mb-2">{inProgress ? 'Score so far' : 'Final Score'}</span>
                                 <div className="flex items-baseline gap-1">
                                     <span className="text-6xl font-black">{candidate.correct_answers}</span>
                                     <span className="text-3xl font-bold opacity-40">/ {candidate.total_questions}</span>
                                 </div>
                                 <span className="text-4xl font-black mt-2">{candidate.score}%</span>
                                 <div className="mt-6 px-6 py-1.5 rounded-full bg-white/50 backdrop-blur-sm shadow-sm border border-white/40">
-                                    <span className="text-sm font-extrabold uppercase tracking-widest">{getStatusText(candidate.score)}</span>
+                                    <span className="text-sm font-extrabold uppercase tracking-widest">{inProgress ? 'In progress' : getStatusText(candidate.score)}</span>
                                 </div>
                             </div>
                         </div>
@@ -229,33 +261,40 @@ export default function ResultDetailPage() {
                         </div>
 
                         <div className="space-y-4">
-                            {qs.map((q, idx) => (
+                            {qs.map((q) => (
                                 <Card key={q.question_id} className="border-gray-100 shadow-sm hover:shadow-md transition-shadow rounded-xl overflow-hidden bg-white">
                                     <CardContent className="p-0">
                                         <div className="p-6 space-y-4">
                                             <div className="flex justify-between items-start gap-4">
                                                 <div className="flex gap-4">
                                                     <span className="flex-shrink-0 w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center text-sm font-black text-gray-500">
-                                                        Q{idx + 1}
+                                                        Q{q.number}
                                                     </span>
-                                                    <h4 className="text-lg font-bold text-gray-900 leading-snug pt-0.5">{q.question_text}</h4>
+                                                    <div className="min-w-0 space-y-2">
+                                                        <span className={`inline-flex px-2 py-0.5 rounded text-[11px] font-semibold ${difficultyBadgeClass(q.difficulty)}`}>{q.difficulty}</span>
+                                                        <FormattedText text={q.question_text} className="text-lg font-bold text-gray-900 leading-snug" />
+                                                    </div>
                                                 </div>
-                                                <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider ${q.is_correct ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
+                                                <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider shrink-0 ${q.is_correct ? 'bg-green-50 text-green-700' : q.selected_option ? 'bg-red-50 text-red-700' : 'bg-gray-100 text-gray-600'
                                                     }`}>
-                                                    {q.is_correct ? <CheckCircle2 className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
-                                                    {q.is_correct ? 'Correct' : 'Incorrect'}
+                                                    {q.is_correct ? <CheckCircle2 className="w-4 h-4" /> : q.selected_option ? <XCircle className="w-4 h-4" /> : <MinusCircle className="w-4 h-4" />}
+                                                    {q.is_correct ? 'Correct' : q.selected_option ? 'Incorrect' : 'Not answered'}
                                                 </div>
                                             </div>
 
                                             {/* Selected vs Correct Summary */}
-                                            <div className="grid grid-cols-2 gap-4">
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                                 <div className="bg-gray-50/50 p-4 rounded-xl border border-gray-100">
                                                     <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Candidate Selected</p>
-                                                    <p className="text-sm font-bold text-gray-900">
-                                                        <span className={`inline-flex w-5 h-5 items-center justify-center rounded-sm mr-2 ${q.is_correct ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-                                                            }`}>{q.selected_option}</span>
-                                                        {q.options[q.selected_option]}
-                                                    </p>
+                                                    {q.selected_option ? (
+                                                        <p className="text-sm font-bold text-gray-900">
+                                                            <span className={`inline-flex w-5 h-5 items-center justify-center rounded-sm mr-2 ${q.is_correct ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                                                                }`}>{q.selected_option}</span>
+                                                            {q.options[q.selected_option]}
+                                                        </p>
+                                                    ) : (
+                                                        <p className="text-sm font-medium text-gray-500 italic">Not answered</p>
+                                                    )}
                                                 </div>
                                                 <div className="bg-gray-50/50 p-4 rounded-xl border border-gray-100">
                                                     <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Correct Answer</p>
@@ -294,8 +333,8 @@ export default function ResultDetailPage() {
                                                                 }`}>
                                                                 {key}
                                                             </div>
-                                                            <div className="flex-grow">
-                                                                <p className={`text-sm font-bold ${textColor}`}>{value}</p>
+                                                            <div className="flex-grow min-w-0">
+                                                                <FormattedText text={value} className={`text-sm font-bold ${textColor}`} />
                                                                 <div className="flex gap-2.5 mt-0.5">
                                                                     {isCorrect && (
                                                                         <span className="text-[10px] font-black text-green-600 flex items-center gap-1 uppercase tracking-wider">
@@ -314,6 +353,10 @@ export default function ResultDetailPage() {
                                                     );
                                                 })}
                                             </div>
+
+                                            {q.explanation && (
+                                                <p className="text-sm text-gray-600"><span className="font-semibold">Explanation:</span> {q.explanation}</p>
+                                            )}
                                         </div>
                                     </CardContent>
                                 </Card>

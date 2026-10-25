@@ -1,13 +1,20 @@
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
+from sqlalchemy import func
 from sqlalchemy.orm import Session
-from typing import Optional, List
+from datetime import timedelta
 from app import models, schemas
 from app.database import get_db
 from app.auth import get_current_user, require_creator_or_admin
+from app.attempts import now_utc
+from app.generation import DIFFICULTY_ORDER, build_blueprint, get_generator
 import json
 import uuid
 
 router = APIRouter(prefix="/tests", tags=["Tests"])
+
+# A custom link expiry can be at most this far ahead
+MAX_CUSTOM_VALIDITY = timedelta(days=365)
 
 
 def generate_test_code() -> str:
@@ -15,203 +22,197 @@ def generate_test_code() -> str:
     return f"TEST-{uuid.uuid4().hex[:8].upper()}"
 
 
-# Create Test - NEW IMPLEMENTATION
-@router.post("/create", response_model=schemas.TestResponse)
-def create_test(
-    test_data: schemas.TestCreate,
+def error(status_code: int, message: str):
+    return JSONResponse(status_code=status_code, content={"status": status_code, "error": message})
+
+
+def can_manage(user: models.User, test: models.Test) -> bool:
+    # Admin can manage every test; Creators only their own
+    return user.role.role_name == "Admin" or test.user_id == user.id
+
+
+def subject_names(db: Session, test: models.Test) -> list[str]:
+    ids = json.loads(test.subject_ids)
+    names = dict(db.query(models.Subject.id, models.Subject.name).filter(models.Subject.id.in_(ids)).all())
+    return [names[i] for i in ids if i in names]
+
+
+def attempt_counts(db: Session, test_ids: list[int]) -> dict[int, int]:
+    if not test_ids:
+        return {}
+    return dict(
+        db.query(models.Response.test_id, func.count(models.Response.id))
+        .filter(models.Response.test_id.in_(test_ids))
+        .group_by(models.Response.test_id)
+        .all()
+    )
+
+
+def summarise(db: Session, test: models.Test, attempt_count: int) -> dict:
+    return {
+        "id": test.id,
+        "test_name": test.test_name,
+        "test_code": test.test_code,
+        "subjects": subject_names(db, test),
+        "difficulties": json.loads(test.difficulties),
+        "num_questions": test.num_questions,
+        "question_count": len(json.loads(test.questions_data)),
+        "duration_minutes": test.duration_minutes,
+        "expires_at": test.expires_at,
+        "is_expired": now_utc() >= test.expires_at,
+        "attempt_count": attempt_count,
+        "created_at": test.created_at,
+    }
+
+
+# Generate Test - picks questions for the chosen subjects and difficulties
+@router.post("/generate", response_model=schemas.TestGenerateResponse)
+def generate_test(
+    test_data: schemas.TestGenerate,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_creator_or_admin)
 ):
+    subjects_by_id = {
+        s.id: s for s in db.query(models.Subject).filter(
+            models.Subject.id.in_(test_data.subject_ids),
+            models.Subject.is_active.is_(True)
+        ).all()
+    }
+    missing = [sid for sid in test_data.subject_ids if sid not in subjects_by_id]
+    if missing:
+        return error(400, f"Unknown or inactive subject id(s): {', '.join(map(str, missing))}")
 
-    # Create a new test with complete question data
-    
-    # **questions**: Required - List of complete question objects with all details
-    
-    # The complete question data is stored in the test, so even if questions are deleted later,
-    # the test preserves all question information for results and analytics.
-    
-    # Returns test_id, unique test_code, and question_count
-    
-    # Validate questions list is not empty
-    if not test_data.questions:
-        raise HTTPException(
-            status_code=400,
-            detail="questions list cannot be empty"
-        )
-    
-    # Basic validation: ensure all required fields are present
-    for idx, question in enumerate(test_data.questions):
-        # Validate answer is not empty
-        if not question.answer or not question.answer.strip():
-            raise HTTPException(
-                status_code=400,
-                detail=f"Question at index {idx} has empty answer"
-            )
-        
-        # Validate options is not empty
-        if not question.options:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Question at index {idx} has empty options"
-            )
-        
-        # Validate question text is not empty
-        if not question.question or not question.question.strip():
-            raise HTTPException(
-                status_code=400,
-                detail=f"Question at index {idx} has empty question text"
-            )
-        
-        # Validate answer exists in options
-        if question.answer.upper() not in [key.upper() for key in question.options.keys()]:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Question at index {idx}: answer '{question.answer}' is not in options"
-            )
-    
-    # Generate unique test code using UUID
+    if test_data.num_questions < len(subjects_by_id):
+        return error(400, f"Choose at least {len(subjects_by_id)} questions, one for each subject")
+
+    now = now_utc()
+    if test_data.expires_at is not None:
+        expires_at = test_data.expires_at
+        if expires_at <= now:
+            return error(400, "The link expiry must be in the future")
+        if expires_at > now + MAX_CUSTOM_VALIDITY:
+            return error(400, "The link expiry can be at most one year ahead")
+    else:
+        expires_at = now + timedelta(hours=test_data.valid_hours)
+
+    # Catalogue order for subjects and Easy -> Hard for difficulties, so blueprints are predictable
+    subjects = sorted(subjects_by_id.values(), key=lambda s: (s.sort_order, s.name))
+    difficulties = [d for d in DIFFICULTY_ORDER if d in {x.value for x in test_data.difficulties}]
+
+    blueprint = build_blueprint(subjects, difficulties, test_data.num_questions)
+    result = get_generator().generate(db, blueprint)
+
+    if not result.questions:
+        return error(400, "No questions are available for the chosen subjects and difficulties")
+
+    questions_data = [
+        {
+            "id": str(position),
+            "source_question_id": q.source_question_id,
+            "subject_id": q.subject_id,
+            "subject": q.subject,
+            "difficulty": q.difficulty,
+            "question": q.question,
+            "options": q.options,
+            "answer": q.answer,
+            "explanation": q.explanation,
+        }
+        for position, q in enumerate(result.questions, start=1)
+    ]
+
     test_code = generate_test_code()
-    
-    # Ensure test code is unique
     while db.query(models.Test).filter(models.Test.test_code == test_code).first():
         test_code = generate_test_code()
-    
-    # Convert questions data to JSON string for storage
-    questions_data_list = []
-    for question in test_data.questions:
-        question_dict = {
-            "question_id": question.question_id,
-            "answer": question.answer,
-            "options": question.options,
-            "category": {
-                "id": question.category.id,
-                "name": question.category.name,
-                # "subcategory": question.category.subcategory
-            },
-            "question": question.question,
-            "difficulty": question.difficulty,
-            "user_id": question.user_id
-        }
-        questions_data_list.append(question_dict)
-    
-    questions_json = json.dumps(questions_data_list)
-    
-    # Create test
+
     db_test = models.Test(
         test_name=test_data.test_name,
         test_code=test_code,
-        questions_data=questions_json,
+        questions_data=json.dumps(questions_data),
+        subject_ids=json.dumps([s.id for s in subjects]),
+        difficulties=json.dumps(difficulties),
+        num_questions=test_data.num_questions,
+        duration_minutes=test_data.duration_minutes,
+        expires_at=expires_at,
         user_id=current_user.id
     )
-    
     db.add(db_test)
     db.commit()
     db.refresh(db_test)
-    
-    # Return response
-    return schemas.TestResponse(
+
+    return schemas.TestGenerateResponse(
         test_id=db_test.id,
         test_name=db_test.test_name,
         test_code=db_test.test_code,
-        question_count=len(test_data.questions)
+        requested_questions=test_data.num_questions,
+        question_count=len(questions_data),
+        shortfalls=[schemas.TestShortfall(**vars(s)) for s in result.shortfalls],
     )
 
 
-# Get all tests created by current user
-@router.get("/my-tests", response_model=list[schemas.TestDetailResponse])
+# Get all tests created by current user (newest first)
+@router.get("/my-tests", response_model=list[schemas.TestSummary])
 def get_my_tests(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-    # Get all tests created by the current user
-    
-    tests = db.query(models.Test).filter(
-        models.Test.user_id == current_user.id
-    ).all()
-    
-    # Convert questions_data from JSON to list for each test
-    result = []
-    for test in tests:
-        questions_data = json.loads(test.questions_data)
-        
-        # Convert back to TestQuestionData objects
-        questions_list = []
-        for q in questions_data:
-            question_obj = schemas.TestQuestionData(
-                question_id=q["question_id"],
-                answer=q["answer"],
-                options=q["options"],
-                category=schemas.QuestionCategory(**q["category"]),
-                question=q["question"],
-                difficulty=q["difficulty"],
-                user_id=q["user_id"]
-            )
-            questions_list.append(question_obj)
-        
-        # Get candidate count
-        candidate_count = db.query(models.Response).filter(models.Response.test_id == test.id).count()
-        test_dict = {
-            "id": test.id,
-            "test_name": test.test_name,
-            "test_code": test.test_code,
-            "questions_data": questions_list,
-            "user_id": test.user_id,
-            "candidate_count": candidate_count,
-            "created_at": test.created_at
-        }
-        result.append(schemas.TestDetailResponse(**test_dict))
-    
-    return result
+    tests = (
+        db.query(models.Test)
+        .filter(models.Test.user_id == current_user.id)
+        .order_by(models.Test.created_at.desc())
+        .all()
+    )
+    counts = attempt_counts(db, [t.id for t in tests])
+    return [summarise(db, test, counts.get(test.id, 0)) for test in tests]
 
 
-# Get test by test_code
+# Get test by test_code, with questions and correct answers - owner or Admin
 @router.get("/{test_code}", response_model=schemas.TestDetailResponse)
 def get_test_by_code(
     test_code: str,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-    # Get test details by test code
-    
-    db_test = db.query(models.Test).filter(
-        models.Test.test_code == test_code
-    ).first()
-    
-    if not db_test:
-        raise HTTPException(status_code=404, detail="Test not found")
+    db_test = db.query(models.Test).filter(models.Test.test_code == test_code).first()
 
-    # Contains correct answers, so only the owner or an Admin may view it
-    if current_user.role.role_name != "Admin" and db_test.user_id != current_user.id:
-        raise HTTPException(status_code=404, detail="Test not found")
+    # 404 rather than 403 for other creators' tests, so codes aren't confirmed to exist
+    if not db_test or not can_manage(current_user, db_test):
+        return error(404, "Test not found")
 
-    # Convert questions_data from JSON to list
-    questions_data = json.loads(db_test.questions_data)
-    
-    # Convert back to TestQuestionData objects
-    questions_list = []
-    for q in questions_data:
-        question_obj = schemas.TestQuestionData(
-            question_id=q["question_id"],
-            answer=q["answer"],
-            options=q["options"],
-            category=schemas.QuestionCategory(**q["category"]),
-            question=q["question"],
-            difficulty=q["difficulty"],
-            user_id=q["user_id"]
-        )
-        questions_list.append(question_obj)
-    
-    candidate_count = db.query(models.Response).filter(models.Response.test_id == db_test.id).count()
+    count = attempt_counts(db, [db_test.id]).get(db_test.id, 0)
+    return {
+        **summarise(db, db_test, count),
+        "questions": json.loads(db_test.questions_data),
+        "is_locked": count > 0,
+    }
 
-    return schemas.TestDetailResponse(
-        id=db_test.id,
-        test_name=db_test.test_name,
-        candidate_count=candidate_count,
-        test_code=db_test.test_code,
-        questions_data=questions_list,
-        user_id=db_test.user_id,
-        created_at=db_test.created_at
-    )
+
+# Remove one question from a test - owner or Admin, only before any candidate has started
+@router.delete("/{test_id}/questions/{question_id}")
+def remove_test_question(
+    test_id: int,
+    question_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_creator_or_admin)
+):
+    # Lock the row so two removals at once can't overwrite each other
+    db_test = db.query(models.Test).filter(models.Test.id == test_id).with_for_update().first()
+    if not db_test or not can_manage(current_user, db_test):
+        return error(404, "Test not found")
+
+    if db.query(models.Response.id).filter(models.Response.test_id == test_id).first():
+        return error(409, "Questions can't be removed after a candidate has started the test")
+
+    questions = json.loads(db_test.questions_data)
+    remaining = [q for q in questions if q["id"] != question_id]
+    if len(remaining) == len(questions):
+        return error(404, "Question not found in this test")
+    if not remaining:
+        return error(400, "A test needs at least one question. Delete the test instead.")
+
+    db_test.questions_data = json.dumps(remaining)
+    db.commit()
+
+    return {"message": "Question removed", "question_count": len(remaining)}
 
 
 # Delete test - Admin can delete any, Creator only their own
@@ -226,10 +227,10 @@ def delete_test(
     if not db_test:
         raise HTTPException(status_code=404, detail="Test not found")
 
-    if current_user.role.role_name != "Admin" and db_test.user_id != current_user.id:
+    if not can_manage(current_user, db_test):
         raise HTTPException(status_code=403, detail="You can only delete your own tests")
 
-    # Delete candidate responses for this test first (responses.test_id is NOT NULL)
+    # Delete candidate attempts for this test first (responses.test_id is NOT NULL)
     db.query(models.Response).filter(models.Response.test_id == test_id).delete()
 
     db.delete(db_test)

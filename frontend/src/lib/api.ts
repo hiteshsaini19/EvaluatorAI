@@ -76,13 +76,29 @@ export const deleteQuestion = (id: number) =>
 
 export const getTests = () => api.get('/tests/my-tests');
 
-export const createTest = (data: { test_name?: string; questions: any[] }) =>
-  api.post('/tests/create', data);
+export const getTest = (testCode: string) => api.get(`/tests/${testCode}`);
+
+export interface GenerateTestPayload {
+  test_name: string;
+  subject_ids: number[];
+  difficulties: string[];
+  num_questions: number;
+  duration_minutes: number;
+  valid_hours?: number;
+  expires_at?: string;
+}
+
+export const generateTest = (data: GenerateTestPayload) =>
+  api.post('/tests/generate', data);
+
+export const removeTestQuestion = (testId: number, questionId: string) =>
+  api.delete(`/tests/${testId}/questions/${encodeURIComponent(questionId)}`);
 
 export const deleteTest = (id: number) =>
   api.delete(`/tests/${id}`);
 
-export const getResults = () => api.get('/candidates/results');
+export const getResults = (testCode?: string) =>
+  api.get('/candidates/results', { params: testCode ? { test_code: testCode } : {} });
 
 export const getResultDetail = (id: number) =>
   api.get(`/candidates/result/${id}`);
@@ -90,16 +106,20 @@ export const getResultDetail = (id: number) =>
 export const deleteResult = (id: number) =>
   api.delete(`/candidates/response/${id}`);
 
-// Candidate Public Endpoints
+// Candidate (public) endpoints: no login. An attempt is addressed by its random token.
 export const getPublicTest = (testCode: string) =>
-  api.get(`/candidates/test/${testCode}`);
+  api.get(`/public/tests/${testCode}`);
 
-export const submitTestResult = (data: {
-  testId: string;
-  name: string;
-  email: string;
-  timeTaken: number;
-  answers: { questionId: string; selected: string }[];
-}) => api.post('/candidates/submit', data);
+export const startAttempt = (testCode: string, data: { name: string; email: string }) =>
+  api.post(`/public/tests/${testCode}/start`, data);
+
+export const getAttempt = (token: string) =>
+  api.get(`/public/attempts/${token}`);
+
+export const saveAttemptAnswers = (token: string, answers: Record<string, string>) =>
+  api.put(`/public/attempts/${token}/answers`, { answers });
+
+export const submitAttempt = (token: string, answers: Record<string, string>) =>
+  api.post(`/public/attempts/${token}/submit`, { answers });
 
 export default api;

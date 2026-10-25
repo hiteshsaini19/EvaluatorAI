@@ -1,11 +1,13 @@
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
 from app import models, schemas
 from app.database import get_db
 from app.auth import require_admin, require_creator_or_admin
-import json
+from app.attempts import (
+    IN_PROGRESS, load_questions, load_answers, finalise_expired, time_used_seconds, format_duration,
+)
 
 router = APIRouter(prefix="/candidates", tags=["Candidates"])
 
@@ -19,195 +21,9 @@ def owns_test(user: models.User, test: models.Test) -> bool:
     return is_admin(user) or test.user_id == user.id
 
 
-def format_time(seconds: int) -> str:
-    if seconds < 60:
-        return f"{seconds}s"
-    minutes = seconds // 60
-    secs = seconds % 60
-    return f"{minutes:02d}:{secs:02d}"
+def not_found(message: str):
+    return JSONResponse(status_code=404, content={"status": 404, "error": message})
 
-
-# SUBMIT TEST (Public - No Auth)
-@router.post("/submit")
-def submit_test(
-    submission: schemas.CandidateCreate,
-    db: Session = Depends(get_db)
-):  
-    # Validation 1: Name cannot be empty
-    if not submission.name or not submission.name.strip():
-        return JSONResponse(
-            status_code=400,
-            content={
-                "status": 400,
-                "error": "'name' cannot be empty"
-            }
-        )
-
-    # Validation 2: Test code must exist
-    test = db.query(models.Test).filter(
-        models.Test.test_code == submission.testId
-    ).first()
-
-    if not test:
-        return JSONResponse(
-            status_code=404,
-            content={
-                "status": 404,
-                "error": "Invalid test code"
-            }
-        )
-
-    # Get test questions
-    questions_data = json.loads(test.questions_data)
-    total_questions = len(questions_data)
-
-    # Validation 3: Must answer ALL questions
-    if len(submission.answers) != total_questions:
-        return JSONResponse(
-            status_code=400,
-            content={
-                "status": 400,
-                "error": f"You must answer all {total_questions} questions. You answered {len(submission.answers)}"
-            }
-        )
-
-    # Validation 4: Every answer must have a selected option (not empty)
-    for idx, answer in enumerate(submission.answers, start=1):
-        if not answer.selected or not answer.selected.strip():
-            return JSONResponse(
-                status_code=400,
-                content={
-                    "status": 400,
-                    "error": f"Question {idx} has no answer selected. All questions must be answered."
-                }
-            )
-
-    # Validation 5: Selected option must be A, B, C, or D
-    valid_options = {'A', 'B', 'C', 'D'}
-    for idx, answer in enumerate(submission.answers, start=1):
-        selected = answer.selected.strip().upper()
-        if selected not in valid_options:
-            return JSONResponse(
-                status_code=400,
-                content={
-                    "status": 400,
-                    "error": f"Question {idx} has invalid option '{answer.selected}'. Only A, B, C, or D are allowed."
-                }
-            )
-
-    # Check if candidate already exists by email
-    db_candidate = db.query(models.Candidate).filter(
-        models.Candidate.email == submission.email
-    ).first()
-
-    # If candidate doesn't exist, create new one
-    if not db_candidate:
-        db_candidate = models.Candidate(
-            name=submission.name.strip(),
-            email=submission.email
-        )
-        db.add(db_candidate)
-        db.commit()
-        db.refresh(db_candidate)
-
-    # All validations passed - Process answers and check correctness
-    questions_map = {str(q["question_id"]): q for q in questions_data}
-    validated_answers = []
-    correct_count = 0
-
-    for answer_item in submission.answers:
-        question_id = str(answer_item.questionId)
-        selected_option = answer_item.selected.strip().upper()
-
-        # Get question from test data
-        question = questions_map.get(question_id)
-
-        if question:
-            # Check if answer is correct
-            correct_answer = question["answer"].upper()
-            is_correct = (selected_option == correct_answer)
-
-            if is_correct:
-                correct_count += 1
-
-            validated_answers.append({
-                "questionId": question_id,
-                "selected": selected_option,
-                "correct": correct_answer,
-                "isCorrect": is_correct
-            })
-
-    # Create response record with all answers as JSON and time_taken
-    db_response = models.Response(
-        candidate_id=db_candidate.id,
-        test_id=test.id,
-        test_name=test.test_name,  # Save test name from test table
-        answers=json.dumps(validated_answers),
-        score=correct_count,
-        time_taken=submission.timeTaken
-    )
-
-    db.add(db_response)
-    db.commit()
-    db.refresh(db_response)
-
-    # Return success response with candidate details
-    return JSONResponse(
-        status_code=200,
-        content={
-            "message": "Test Submitted Successfully!",
-            "thank_you_message": f"Thank you for completing the test, {db_candidate.name}",
-            "response": {
-                "id": db_response.id,
-                "candidate_id": db_candidate.id,
-                "name": db_candidate.name,
-                "email": db_candidate.email,
-                "test_code": test.test_code,
-                "time_taken": db_response.time_taken,
-                "score": f"{correct_count}/{len(validated_answers)}",
-                "answered_at": db_response.answered_at.isoformat()
-            }
-        }
-    )
-
-# GET TEST FOR CANDIDATE (Public - No Auth)
-@router.get("/test/{test_code}", response_model=schemas.PublicTestResponse)
-def get_public_test(
-    test_code: str,
-    db: Session = Depends(get_db)
-):
-    # Validation: Test code must exist
-    test = db.query(models.Test).filter(
-        models.Test.test_code == test_code
-    ).first()
-
-    if not test:
-        return JSONResponse(
-            status_code=404,
-            content={
-                "status": 404,
-                "error": "Invalid test code"
-            }
-        )
-
-    # Decode questions and remove answers
-    questions_data = json.loads(test.questions_data)
-    public_questions = []
-    
-    for q in questions_data:
-        public_questions.append(schemas.PublicTestQuestion(
-            question_id=q["question_id"],
-            question=q["question"],
-            options=q["options"],
-            difficulty=q["difficulty"],
-            category_name=q["category"]["name"]
-        ))
-
-    return schemas.PublicTestResponse(
-        test_name=test.test_name,
-        test_code=test.test_code,
-        questions=public_questions
-    )
 
 # GET RESULT BY RESPONSE ID (Admin/Creator Only)
 # Keyed by response ID (same ID the results list returns), since one candidate can take many tests
@@ -217,88 +33,58 @@ def get_candidate_result(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_creator_or_admin)
 ):
+    response = db.query(models.Response).filter(models.Response.id == response_id).first()
 
-    # Get response record
-    response = db.query(models.Response).filter(
-        models.Response.id == response_id
-    ).first()
+    # 404 rather than 403 for other creators' results, so IDs aren't confirmed to exist
+    if not response or not owns_test(current_user, response.test):
+        return not_found("Result not found")
 
-    # Get test (404 rather than 403 for other creators' results, so IDs aren't confirmed to exist)
-    test = db.query(models.Test).filter(models.Test.id == response.test_id).first() if response else None
+    finalise_expired(db, [response])
 
-    if not response or not test or not owns_test(current_user, test):
-        return JSONResponse(
-            status_code=404,
-            content={
-                "status": 404,
-                "error": "Result not found"
-            }
-        )
-
-    # Get candidate
-    candidate = db.query(models.Candidate).filter(
-        models.Candidate.id == response.candidate_id
-    ).first()
-
-    if not candidate:
-        return JSONResponse(
-            status_code=404,
-            content={
-                "status": 404,
-                "error": "Candidate not found"
-            }
-        )
-
-    # Get questions data
-    questions_data = json.loads(test.questions_data)
-    questions_map = {str(q["question_id"]): q for q in questions_data}
-
-    # Parse answers from response
-    answers = json.loads(response.answers)
-
-    # Calculate score
-    total_questions = len(answers)
-    correct_answers = response.score
+    questions = load_questions(response.test)
+    answers = load_answers(response)
+    correct_answers = sum(1 for q in questions if answers.get(q["id"]) == q["answer"])
+    answered = sum(1 for q in questions if q["id"] in answers)
+    total_questions = len(questions)
     score_percentage = (correct_answers / total_questions * 100) if total_questions > 0 else 0
+    time_used = time_used_seconds(response)
 
-    # Build detailed question breakdown
-    question_breakdown = []
-    for answer in answers:
-        question = questions_map.get(answer["questionId"])
+    breakdown = [
+        schemas.QuestionBreakdown(
+            question_id=q["id"],
+            question_text=q["question"],
+            selected_option=answers.get(q["id"]),
+            correct_option=q["answer"],
+            is_correct=answers.get(q["id"]) == q["answer"],
+            options=q["options"],
+            difficulty=q["difficulty"],
+            subject_name=q["subject"],
+            explanation=q.get("explanation", ""),
+        )
+        for q in questions
+    ]
 
-        if question:
-            question_breakdown.append(schemas.QuestionBreakdown(
-                question_id=answer["questionId"],
-                question_text=question["question"],
-                selected_option=answer["selected"],
-                correct_option=answer["correct"],
-                is_correct=answer["isCorrect"],
-                # Uppercase keys to match selected/correct, which are stored uppercase
-                options={key.upper(): value for key, value in question["options"].items()},
-                difficulty=question.get("difficulty", "Medium"),
-                category_name=question["category"]["name"]
-            ))
-
-    # Build candidate detail response
     candidate_detail = schemas.CandidateDetailResponse(
-        id=candidate.id,
-        name=candidate.name,
-        email=candidate.email,
-        test_id=response.test_id,  # From response table
-        test_code=test.test_code,
-        test_name=response.test_name,  # From response table
-        time_taken=response.time_taken,  # Now from response table
-        time_taken_formatted=format_time(response.time_taken),
+        id=response.candidate.id,
+        name=response.candidate.name,
+        email=response.candidate.email,
+        test_id=response.test_id,
+        test_code=response.test.test_code,
+        test_name=response.test_name,
+        status=response.status,
+        time_used=time_used,
+        time_used_formatted=format_duration(time_used),
+        duration_minutes=response.test.duration_minutes,
         total_questions=total_questions,
         correct_answers=correct_answers,
+        unanswered_count=total_questions - answered,
         score=round(score_percentage, 2),
-        created_at=response.answered_at  # Use response timestamp
+        started_at=response.started_at,
+        submitted_at=response.submitted_at,
     )
 
-    return schemas.CandidateResultResponse(
-        candidate=candidate_detail,
-        responses=question_breakdown
-    )
+    return schemas.CandidateResultResponse(candidate=candidate_detail, responses=breakdown)
+
 
 # GET ALL RESULTS (Admin/Creator Only)
 @router.get("/results", response_model=List[schemas.CandidateListItem])
@@ -307,8 +93,9 @@ def get_all_results(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_creator_or_admin)
 ):
-    # Query responses instead of candidates
-    query = db.query(models.Response)
+    query = db.query(models.Response).options(
+        joinedload(models.Response.candidate), joinedload(models.Response.test)
+    )
 
     # Creators only see results for their own tests
     if not is_admin(current_user):
@@ -316,55 +103,43 @@ def get_all_results(
             models.Test.user_id == current_user.id
         )
 
-    # Apply test_code filter if provided
     if test_code:
-        test = db.query(models.Test).filter(
-            models.Test.test_code == test_code
-        ).first()
-
+        test = db.query(models.Test).filter(models.Test.test_code == test_code).first()
         if not test or not owns_test(current_user, test):
-            return JSONResponse(
-                status_code=404,
-                content={
-                    "status": 404,
-                    "error": "Test not found"
-                }
-            )
-
+            return not_found("Test not found")
         query = query.filter(models.Response.test_id == test.id)
 
-    # Get all responses (most recent first)
-    responses = query.order_by(models.Response.answered_at.desc()).all()
+    # Most recent first
+    responses = query.order_by(models.Response.started_at.desc()).all()
+    finalise_expired(db, responses)
 
-    # Build response list
     result = []
     for response in responses:
-        candidate = db.query(models.Candidate).filter(
-            models.Candidate.id == response.candidate_id
-        ).first()
-
-        test = db.query(models.Test).filter(
-            models.Test.id == response.test_id
-        ).first()
-
-        answers = json.loads(response.answers)
-        total_questions = len(answers)
-        correct_answers = response.score
-        score_percentage = int((correct_answers / total_questions * 100)) if total_questions > 0 else 0
+        questions = load_questions(response.test)
+        answers = load_answers(response)
+        total_questions = len(questions)
+        answered = sum(1 for q in questions if q["id"] in answers)
+        finished = response.status != IN_PROGRESS
 
         result.append(schemas.CandidateListItem(
-            id=response.id,  # Now showing response ID
-            name=candidate.name,
-            email=candidate.email,
-            test_code=test.test_code,
-            test_name=response.test_name,  # From response table
-            score=f"{correct_answers}/{total_questions}",
-            score_percentage=score_percentage,
-            time_taken_formatted=format_time(response.time_taken),
-            created_at=response.answered_at
+            id=response.id,
+            name=response.candidate.name,
+            email=response.candidate.email,
+            test_code=response.test.test_code,
+            test_name=response.test_name,
+            status=response.status,
+            score=f"{response.score}/{total_questions}" if finished else None,
+            score_percentage=(
+                int(response.score / total_questions * 100) if total_questions > 0 else 0
+            ) if finished else None,
+            unanswered_count=total_questions - answered,
+            time_used_formatted=format_duration(time_used_seconds(response)),
+            started_at=response.started_at,
+            submitted_at=response.submitted_at,
         ))
 
     return result
+
 
 # DELETE CANDIDATE (Admin Only)
 @router.delete("/{candidate_id}")
@@ -373,30 +148,17 @@ def delete_candidate(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_admin)
 ):
-
-    candidate = db.query(models.Candidate).filter(
-        models.Candidate.id == candidate_id
-    ).first()
-
+    candidate = db.query(models.Candidate).filter(models.Candidate.id == candidate_id).first()
     if not candidate:
-        return JSONResponse(
-            status_code=404,
-            content={
-                "status": 404,
-                "error": "Candidate not found"
-            }
-        )
+        return not_found("Candidate not found")
 
-    # Delete response first (manually)
-    db.query(models.Response).filter(
-        models.Response.candidate_id == candidate_id
-    ).delete()
-
-    # Then delete candidate
+    # Delete attempts first, then the candidate
+    db.query(models.Response).filter(models.Response.candidate_id == candidate_id).delete()
     db.delete(candidate)
     db.commit()
 
     return {"message": "Candidate and their responses deleted successfully"}
+
 
 # DELETE RESPONSE BY ID (Owner of the test or Admin)
 @router.delete("/response/{response_id}")
@@ -405,23 +167,11 @@ def delete_response(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_creator_or_admin)
 ):
+    response = db.query(models.Response).filter(models.Response.id == response_id).first()
 
-    response = db.query(models.Response).filter(
-        models.Response.id == response_id
-    ).first()
+    if not response or not owns_test(current_user, response.test):
+        return not_found("Response not found")
 
-    test = db.query(models.Test).filter(models.Test.id == response.test_id).first() if response else None
-
-    if not response or not test or not owns_test(current_user, test):
-        return JSONResponse(
-            status_code=404,
-            content={
-                "status": 404,
-                "error": "Response not found"
-            }
-        )
-
-    # Delete the response
     db.delete(response)
     db.commit()
 

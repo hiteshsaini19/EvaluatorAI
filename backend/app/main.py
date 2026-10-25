@@ -6,7 +6,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from app.database import engine
-from app.routes import auth, roles, users, subjects, questions, test, candidates
+from app.routes import auth, roles, users, subjects, questions, test, candidates, public
 
 # The schema is managed only by Alembic migrations: run `alembic upgrade head` before starting.
 
@@ -52,13 +52,28 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             }
         )
 
-    # Handle length and format failures with the real reason
-    if errors and errors[0].get("type") in ["string_too_short", "string_too_long", "value_error"]:
+    # Handle length, range and format failures with the real reason
+    if errors and errors[0].get("type") in [
+        "string_too_short", "string_too_long", "value_error",
+        "greater_than_equal", "less_than_equal", "enum", "int_parsing", "datetime_from_date_parsing",
+        "datetime_parsing",
+    ]:
         error = errors[0]
-        field_name = error.get("loc")[-1]
+        # The last named part of the location (list items add an index, e.g. difficulties.0)
+        field_name = next((part for part in reversed(error.get("loc") or []) if isinstance(part, str)), "value")
         ctx = error.get("ctx") or {}
 
-        if error["type"] == "string_too_short":
+        if error["type"] == "greater_than_equal":
+            message = f"{field_name} must be at least {ctx.get('ge')}"
+        elif error["type"] == "less_than_equal":
+            message = f"{field_name} must be at most {ctx.get('le')}"
+        elif error["type"] == "enum":
+            message = f"{field_name} must be one of {ctx.get('expected')}"
+        elif error["type"] == "int_parsing":
+            message = f"{field_name} must be a whole number"
+        elif error["type"] in ("datetime_parsing", "datetime_from_date_parsing"):
+            message = f"{field_name} must be a valid date and time"
+        elif error["type"] == "string_too_short":
             min_length = ctx.get("min_length", 1)
             message = (f"{field_name} cannot be empty" if min_length <= 1
                        else f"{field_name} must be at least {min_length} characters")
@@ -96,6 +111,7 @@ app.include_router(subjects.router)
 app.include_router(questions.router)
 app.include_router(test.router)
 app.include_router(candidates.router)
+app.include_router(public.router)
 
 @app.get("/")
 def read_root():

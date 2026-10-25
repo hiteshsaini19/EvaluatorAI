@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, EmailStr, field_validator
+from pydantic import BaseModel, Field, EmailStr, field_validator, model_validator
 from datetime import datetime
 from typing import Optional, Dict, List
 import json
@@ -139,109 +139,174 @@ class QuestionPaginatedResponse(BaseModel):
     per_page: int
 
 
-class QuestionCategory(BaseModel):
-    id: int
-    name: str
-    
-    class Config:
-        from_attributes = True
-
-
 # Test Schemas
-class TestQuestionData(BaseModel):
-    question_id: int
-    answer: str
-    options: Dict[str, str]  # e.g., {"A": "Option A", "B": "Option B", ...}
-    category: QuestionCategory
-    question: str
-    difficulty: str  # "Easy", "Medium", "Hard"
-    user_id: int
+class TestGenerate(BaseModel):
+    test_name: str = Field(..., min_length=1, max_length=200)
+    subject_ids: List[int]
+    difficulties: List[DifficultyEnum]
+    num_questions: int = Field(..., ge=5, le=100)
+    duration_minutes: int = Field(..., ge=5, le=180)
+    # Link validity: either a number of hours from now, or a custom expiry date
+    valid_hours: Optional[int] = Field(None, ge=1, le=720)
+    expires_at: Optional[datetime] = None
 
-# Test Create Schema
-class TestCreate(BaseModel):
-    test_name: Optional[str] = None
-    questions: List[TestQuestionData]
+    @field_validator("test_name")
+    @classmethod
+    def name_not_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("test_name cannot be empty")
+        return value
+
+    @field_validator("subject_ids")
+    @classmethod
+    def at_least_one_subject(cls, value: List[int]) -> List[int]:
+        value = list(dict.fromkeys(value))  # Drop duplicates, keep order
+        if not value:
+            raise ValueError("Choose at least one subject")
+        return value
+
+    @field_validator("difficulties")
+    @classmethod
+    def at_least_one_difficulty(cls, value: List[DifficultyEnum]) -> List[DifficultyEnum]:
+        if not value:
+            raise ValueError("Choose at least one difficulty")
+        return value
+
+    @model_validator(mode="after")
+    def one_validity(self):
+        if (self.valid_hours is None) == (self.expires_at is None):
+            raise ValueError("Give either valid_hours or expires_at for the link validity")
+        if self.expires_at is not None and self.expires_at.tzinfo is None:
+            raise ValueError("expires_at must include a time zone")
+        return self
 
 
-# Test Response Schema
-class TestResponse(BaseModel):
+class TestShortfall(BaseModel):
+    subject: str
+    difficulty: str
+    requested: int
+    generated: int
+
+
+class TestGenerateResponse(BaseModel):
     test_id: int
-    test_name: Optional[str] = None
+    test_name: str
     test_code: str
+    requested_questions: int
     question_count: int
-    
-    class Config:
-        from_attributes = True
+    shortfalls: List[TestShortfall] = []
 
-# Test Detail Response Schema
-class TestDetailResponse(BaseModel):
+
+class TestQuestion(BaseModel):
+    id: str
+    source_question_id: Optional[int] = None
+    subject_id: Optional[int] = None
+    subject: str
+    difficulty: str
+    question: str
+    options: Dict[str, str]  # {"A": ..., "B": ..., "C": ..., "D": ...}
+    answer: str
+    explanation: str = ""
+
+
+class TestSummary(BaseModel):
     id: int
     test_name: Optional[str] = None
     test_code: str
-    questions_data: List[TestQuestionData]  # Returns the complete question array
-    user_id: int
-    candidate_count: Optional[int] = 0
+    subjects: List[str]
+    difficulties: List[str]
+    num_questions: int  # Requested when generated
+    question_count: int  # Questions currently in the test
+    duration_minutes: int
+    expires_at: datetime
+    is_expired: bool
+    attempt_count: int
     created_at: datetime
-    
-    class Config:
-        from_attributes = True
 
-# CANDIDATE & RESPONSE SCHEMAS
-# Individual Answer Item
-class AnswerItem(BaseModel):
-    questionId: str
-    selected: str
 
-# Answer with validation result
-class AnswerWithValidation(BaseModel):
-    questionId: str
-    selected: str
-    correct: str
-    isCorrect: bool
+class TestDetailResponse(TestSummary):
+    questions: List[TestQuestion]
+    # Removing questions is locked once any candidate has started
+    is_locked: bool
 
-# Candidate Submission
-class CandidateCreate(BaseModel):
-    testId: str
-    name: str
+
+# CANDIDATE (PUBLIC) SCHEMAS
+class PublicTestInfo(BaseModel):
+    test_name: Optional[str] = None
+    test_code: str
+    subjects: List[str]
+    question_count: int
+    duration_minutes: int
+    expires_at: datetime
+    is_expired: bool
+    server_time: datetime
+
+
+class AttemptStart(BaseModel):
+    name: str = Field(..., min_length=1, max_length=150)
     email: EmailStr
-    timeTaken: int
-    answers: List[AnswerItem]
 
-# Public Test View (For Candidates)
-class PublicTestQuestion(BaseModel):
-    question_id: int
+    @field_validator("name")
+    @classmethod
+    def name_not_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("name cannot be empty")
+        return value
+
+    @field_validator("email")
+    @classmethod
+    def lowercase_email(cls, value: str) -> str:
+        return value.lower()
+
+
+class AttemptQuestion(BaseModel):
+    id: str
+    subject: str
+    difficulty: str
     question: str
     options: Dict[str, str]
-    difficulty: str
-    category_name: str
 
-class PublicTestResponse(BaseModel):
+
+class AttemptState(BaseModel):
+    attempt_token: str
     test_name: Optional[str] = None
     test_code: str
-    questions: List[PublicTestQuestion]
+    candidate_name: str
+    candidate_email: str
+    status: str  # in_progress / submitted / timed_out
+    questions: List[AttemptQuestion]  # Empty once the attempt is finished
+    answers: Dict[str, str]
+    question_count: int
+    answered_count: int
+    duration_minutes: int
+    started_at: datetime
+    deadline: datetime
+    submitted_at: Optional[datetime] = None
+    server_time: datetime
 
-# Basic Candidate Response
-class CandidateResponse(BaseModel):
-    id: int
-    name: str
-    email: str
-    created_at: datetime
-    
-    class Config:
-        from_attributes = True
 
+class AttemptAnswers(BaseModel):
+    # The full set of answers so far: question id -> "A".."D"
+    answers: Dict[str, str]
+
+
+# RESULTS SCHEMAS
 # Question Breakdown for Results
 class QuestionBreakdown(BaseModel):
     question_id: str
     question_text: str
-    selected_option: str
+    selected_option: Optional[str] = None  # None = not answered
     correct_option: str
     is_correct: bool
     options: Dict[str, str]
     difficulty: str
-    category_name: str
+    subject_name: str
+    explanation: str = ""
 
-# Candidate Detail with Score
+
+# Attempt detail with score
 class CandidateDetailResponse(BaseModel):
     id: int
     name: str
@@ -249,15 +314,17 @@ class CandidateDetailResponse(BaseModel):
     test_id: int
     test_code: str
     test_name: Optional[str] = None
-    time_taken: int
-    time_taken_formatted: str
+    status: str
+    time_used: int
+    time_used_formatted: str
+    duration_minutes: int
     total_questions: int
     correct_answers: int
+    unanswered_count: int
     score: float
-    created_at: datetime
-    
-    class Config:
-        from_attributes = True
+    started_at: datetime
+    submitted_at: Optional[datetime] = None
+
 
 # Full Result Response
 class CandidateResultResponse(BaseModel):
@@ -265,14 +332,17 @@ class CandidateResultResponse(BaseModel):
     responses: List[QuestionBreakdown]
 
 
-# Dashboard List Item
+# Results list item
 class CandidateListItem(BaseModel):
     id: int
     name: str
     email: str
     test_code: str
     test_name: Optional[str] = None
-    score: str
-    score_percentage: int
-    time_taken_formatted: str
-    created_at: datetime
+    status: str
+    score: Optional[str] = None  # "7/10"; None while in progress
+    score_percentage: Optional[int] = None
+    unanswered_count: int
+    time_used_formatted: str
+    started_at: datetime
+    submitted_at: Optional[datetime] = None

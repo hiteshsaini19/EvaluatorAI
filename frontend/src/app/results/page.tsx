@@ -1,8 +1,10 @@
 'use client';
 
-
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
+import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { getResults, deleteResult } from '@/lib/api';
+import { AttemptStatus, STATUS_LABELS, formatDateTime } from '@/lib/tests';
 import {
   Table,
   TableBody,
@@ -12,62 +14,56 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Card, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import Link from 'next/link';
-import { Trash2, Eye, ChevronLeft, ChevronRight } from 'lucide-react';
 
 interface Result {
   id: number;
   name: string;
   email: string;
   test_code: string;
-  score: string;
-  score_percentage: number;
-  time_taken_formatted: string;
-  created_at: string;
+  test_name: string | null;
+  status: AttemptStatus;
+  score: string | null;
+  score_percentage: number | null;
+  unanswered_count: number;
+  time_used_formatted: string;
+  started_at: string;
+  submitted_at: string | null;
 }
 
 export default function ResultsPage() {
+  // useSearchParams needs a Suspense boundary in the App Router
+  return (
+    <Suspense fallback={<div className="p-8 text-gray-500">Loading results...</div>}>
+      <ResultsList />
+    </Suspense>
+  );
+}
+
+function ResultsList() {
+  const searchParams = useSearchParams();
+  const testCode = searchParams.get('test') || undefined;
+
   const [results, setResults] = useState<Result[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   // The backend only returns results for the user's own tests (Admin: all), and owners may delete them
   useEffect(() => {
-    fetchResults();
-  }, []);
+    getResults(testCode)
+      .then(response => { setResults(response.data); setError(''); })
+      .catch((err: any) => setError(err.response?.data?.error || err.message || 'Failed to fetch results'))
+      .finally(() => setLoading(false));
+  }, [testCode]);
 
-  const fetchResults = async () => {
+  const handleDelete = async (result: Result) => {
+    const note = result.status === 'in_progress' ? ' This candidate is still taking the test; deleting lets them start again.' : '';
+    if (!confirm(`Delete ${result.name}'s result?${note}`)) return;
     try {
-      const response = await getResults();
-      setResults(response.data);
-      setLoading(false);
+      await deleteResult(result.id);
+      setResults(prev => prev.filter(r => r.id !== result.id));
     } catch (err: any) {
-      setError(err.message || 'Failed to fetch results');
-      setLoading(false);
+      alert('Failed to delete result: ' + (err.response?.data?.error || err.message));
     }
-  };
-
-  const handleDelete = async (id: number) => {
-    if (!confirm('Are you sure you want to delete this result?')) return;
-    try {
-      await deleteResult(id);
-      setResults(results.filter(r => r.id !== id));
-    } catch (err: any) {
-      alert('Failed to delete result: ' + err.message);
-    }
-  };
-
-  const formatDate = (dateStr: string) => {
-    const d = new Date(dateStr);
-    return d.toLocaleString('en-US', {
-      month: 'short',
-      day: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: true
-    });
   };
 
   if (loading) {
@@ -81,120 +77,119 @@ export default function ResultsPage() {
 
   if (error) {
     return (
-      <Card className="border-red-200 bg-red-50/50 backdrop-blur-sm">
-        <CardContent className="pt-6">
-          <div className="flex items-center gap-2 text-red-700">
-            <span className="font-bold text-lg">Error!</span>
-          </div>
-          <p className="text-red-600 mt-1">{error}</p>
-        </CardContent>
-      </Card>
+      <div className="p-8">
+        <Card className="border-red-200 bg-red-50/50">
+          <CardContent className="pt-6">
+            <p className="font-bold text-red-700">Error</p>
+            <p className="text-red-600 mt-1">{error}</p>
+            {testCode && <Link href="/results" className="inline-block mt-4 text-blue-600 font-medium">Show all results</Link>}
+          </CardContent>
+        </Card>
+      </div>
     );
   }
 
+  const filteredName = testCode ? (results[0]?.test_name || testCode) : null;
+
   return (
-    <div className="max-w-7xl mx-auto space-y-8 py-4">
+    <div className="max-w-7xl mx-auto space-y-6 py-8 px-8">
       <div className="space-y-1">
         <h1 className="text-3xl font-extrabold tracking-tight text-gray-900">Results</h1>
-        <p className="text-gray-500 font-medium pb-2 text-sm">Manage your Interview platform</p>
+        {testCode ? (
+          <p className="text-gray-500 text-sm">
+            Showing results for <span className="font-semibold text-gray-700">{filteredName}</span>
+            {' · '}<Link href="/results" className="text-blue-600 hover:underline">Show all</Link>
+          </p>
+        ) : (
+          <p className="text-gray-500 text-sm">Scores and status for every candidate who has taken your tests</p>
+        )}
       </div>
 
       <Card className="border-gray-200 shadow-xl overflow-hidden rounded-xl bg-white">
-        <CardContent className="p-0">
+        <CardContent className="p-0 overflow-x-auto">
           <Table>
             <TableHeader className="bg-gray-50/50">
               <TableRow className="hover:bg-transparent border-b border-gray-100">
-                <TableHead className="py-4 px-6 text-[11px] font-bold text-gray-500 uppercase tracking-widest">CANDIDATE</TableHead>
-                <TableHead className="py-4 px-6 text-[11px] font-bold text-gray-500 uppercase tracking-widest text-center">SCORE</TableHead>
-                <TableHead className="py-4 px-6 text-[11px] font-bold text-gray-500 uppercase tracking-widest text-center">TIME TAKEN</TableHead>
-                <TableHead className="py-4 px-6 text-[11px] font-bold text-gray-500 uppercase tracking-widest text-center">TEST ID</TableHead>
-                <TableHead className="py-4 px-6 text-[11px] font-bold text-gray-500 uppercase tracking-widest">SUBMITTED</TableHead>
-                <TableHead className="py-4 px-6 text-[11px] font-bold text-gray-500 uppercase tracking-widest text-right">ACTIONS</TableHead>
+                <TableHead className="py-4 px-6 text-[11px] font-bold text-gray-500 uppercase tracking-widest">Candidate</TableHead>
+                <TableHead className="py-4 px-6 text-[11px] font-bold text-gray-500 uppercase tracking-widest">Test</TableHead>
+                <TableHead className="py-4 px-6 text-[11px] font-bold text-gray-500 uppercase tracking-widest">Status</TableHead>
+                <TableHead className="py-4 px-6 text-[11px] font-bold text-gray-500 uppercase tracking-widest text-center">Score</TableHead>
+                <TableHead className="py-4 px-6 text-[11px] font-bold text-gray-500 uppercase tracking-widest text-center">Unanswered</TableHead>
+                <TableHead className="py-4 px-6 text-[11px] font-bold text-gray-500 uppercase tracking-widest text-center">Time used</TableHead>
+                <TableHead className="py-4 px-6 text-[11px] font-bold text-gray-500 uppercase tracking-widest">Finished</TableHead>
+                <TableHead className="py-4 px-6 text-[11px] font-bold text-gray-500 uppercase tracking-widest text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {results.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="h-64 text-center">
+                  <TableCell colSpan={8} className="h-64 text-center">
                     <div className="flex flex-col items-center justify-center text-gray-400">
-                      <p className="text-lg font-medium">No test results found</p>
-                      <p className="text-sm">Wait for candidates to complete tests</p>
+                      <p className="text-lg font-medium">No results yet</p>
+                      <p className="text-sm">Share a test link; results appear here as candidates take it.</p>
                     </div>
                   </TableCell>
                 </TableRow>
               ) : (
-                results.map((r) => (
-                  <TableRow key={r.id} className="group hover:bg-gray-50 transition-all duration-200 border-b border-gray-50">
-                    <TableCell className="py-5 px-6">
-                      <div className="flex flex-col">
-                        <span className="font-bold text-gray-900 leading-tight">{r.name}</span>
-                        <span className="text-sm text-gray-500 font-medium">{r.email}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="py-5 px-6 text-center">
-                      <div className="flex flex-col items-center justify-center gap-1">
-                        <div className="flex items-center gap-2">
-                          <span className="font-bold text-gray-900 text-lg">{r.score}</span>
-                          <span className={`inline-flex px-2.5 py-0.5 text-[11px] font-bold rounded-full ring-1 ring-inset ${r.score_percentage >= 70 ? 'bg-green-50 text-green-700 ring-green-600/20' :
-                              r.score_percentage >= 40 ? 'bg-yellow-50 text-yellow-700 ring-yellow-600/20' :
-                                'bg-red-50 text-red-700 ring-red-600/20'
-                            }`}>
-                            {r.score_percentage}%
-                          </span>
+                results.map((r) => {
+                  const status = STATUS_LABELS[r.status];
+                  return (
+                    <TableRow key={r.id} className="hover:bg-gray-50 border-b border-gray-50">
+                      <TableCell className="py-4 px-6">
+                        <div className="flex flex-col">
+                          <span className="font-bold text-gray-900 leading-tight">{r.name}</span>
+                          <span className="text-sm text-gray-500">{r.email}</span>
                         </div>
-                      </div>
-                    </TableCell>
-                    <TableCell className="py-5 px-6 text-center">
-                      <span className="text-gray-900 font-bold text-sm">{r.time_taken_formatted}</span>
-                    </TableCell>
-                    <TableCell className="py-5 px-6 text-center">
-                      <code className="bg-gray-100/80 px-2 py-1 rounded border border-gray-200 text-gray-600 font-mono text-[12px] shadow-sm select-all">
-                        {r.test_code.slice(0, 8)}...
-                      </code>
-                    </TableCell>
-                    <TableCell className="py-5 px-6">
-                      <span className="text-gray-600 font-medium text-sm whitespace-nowrap">
-                        {formatDate(r.created_at)}
-                      </span>
-                    </TableCell>
-                    <TableCell className="py-5 px-6 text-right">
-                      <div className="flex justify-end items-center gap-4">
-                        <Link
-                          href={`/results/${r.id}`}
-                          className="text-blue-600 hover:text-blue-800 text-[13px] font-bold transition-colors"
-                        >
-                          View
-                        </Link>
-                        <button
-                          onClick={() => handleDelete(r.id)}
-                          className="text-red-500 hover:text-red-700 text-[13px] font-bold transition-colors"
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))
+                      </TableCell>
+                      <TableCell className="py-4 px-6 text-sm text-gray-700">
+                        {testCode ? (r.test_name || r.test_code) : (
+                          <Link href={`/results?test=${r.test_code}`} className="hover:text-blue-700 hover:underline">
+                            {r.test_name || r.test_code}
+                          </Link>
+                        )}
+                      </TableCell>
+                      <TableCell className="py-4 px-6">
+                        <span className={`inline-flex px-2.5 py-0.5 text-[11px] font-bold rounded-full ring-1 ring-inset whitespace-nowrap ${status.className}`}>
+                          {status.label}
+                        </span>
+                      </TableCell>
+                      <TableCell className="py-4 px-6 text-center whitespace-nowrap">
+                        {r.score === null ? (
+                          <span className="text-gray-400">—</span>
+                        ) : (
+                          <div className="flex items-center justify-center gap-2">
+                            <span className="font-bold text-gray-900">{r.score}</span>
+                            <span className={`inline-flex px-2 py-0.5 text-[11px] font-bold rounded-full ring-1 ring-inset ${(r.score_percentage ?? 0) >= 70 ? 'bg-green-50 text-green-700 ring-green-600/20' :
+                              (r.score_percentage ?? 0) >= 40 ? 'bg-yellow-50 text-yellow-700 ring-yellow-600/20' :
+                                'bg-red-50 text-red-700 ring-red-600/20'
+                              }`}>
+                              {r.score_percentage}%
+                            </span>
+                          </div>
+                        )}
+                      </TableCell>
+                      <TableCell className="py-4 px-6 text-center text-sm font-semibold text-gray-800">{r.unanswered_count}</TableCell>
+                      <TableCell className="py-4 px-6 text-center text-sm font-semibold text-gray-800">{r.time_used_formatted}</TableCell>
+                      <TableCell className="py-4 px-6 text-sm text-gray-600 whitespace-nowrap">
+                        {r.submitted_at ? formatDateTime(r.submitted_at) : <span className="text-gray-400">Started {formatDateTime(r.started_at)}</span>}
+                      </TableCell>
+                      <TableCell className="py-4 px-6 text-right">
+                        <div className="flex justify-end items-center gap-4 text-[13px] font-bold">
+                          <Link href={`/results/${r.id}`} className="text-blue-600 hover:text-blue-800">View</Link>
+                          <button onClick={() => handleDelete(r)} className="text-red-500 hover:text-red-700">Delete</button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })
               )}
             </TableBody>
           </Table>
 
-          <div className="px-6 py-4 bg-white border-t border-gray-100 flex items-center justify-between">
+          <div className="px-6 py-4 bg-white border-t border-gray-100">
             <p className="text-sm text-gray-500 font-medium">
-              Showing <span className="text-gray-900 font-bold">{results.length > 0 ? 1 : 0}</span> to <span className="text-gray-900 font-bold">{results.length}</span> of <span className="text-gray-900 font-bold">{results.length}</span> results
+              {results.length} {results.length === 1 ? 'result' : 'results'}
             </p>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" className="h-8 py-0 px-3 border-gray-200 text-gray-400 cursor-not-allowed">
-                Previous
-              </Button>
-              <div className="flex items-center gap-1 px-2">
-                <span className="text-sm text-gray-500 font-medium">Page</span>
-                <span className="text-sm text-gray-900 font-bold">1 of 1</span>
-              </div>
-              <Button variant="outline" size="sm" className="h-8 py-0 px-3 border-gray-200 text-gray-400 cursor-not-allowed">
-                Next
-              </Button>
-            </div>
           </div>
         </CardContent>
       </Card>

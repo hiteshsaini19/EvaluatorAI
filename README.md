@@ -18,9 +18,11 @@ render.yaml Render blueprint for the backend (rootDir: backend)
 - Each creator sees only their own tests and results; Admin sees everything
 - Fixed catalogue of 24 subjects in 8 groups, each with a topic scope and Easy/Medium/Hard rubric (`backend/app/data/subjects.py`)
 - Example question bank (Admin): 144 starter questions, create, edit, delete, filter by group/subject/difficulty, search, CSV bulk import
-- Test builder: pick questions by subject and difficulty; each test gets a unique `TEST-XXXXXXXX` code and link
-- Candidate flow: name/email entry, timed test, question navigator, submit with auto-scoring
-- Results: list of all submissions and a per-question breakdown
+- Test generation: pick subjects, difficulties, number of questions, duration and link validity; the questions are drawn from the example bank for now (AI generation comes next). Each test gets a unique `TEST-XXXXXXXX` code and link
+- View a test with correct answers and remove questions until the first candidate starts
+- Candidate flow: name/email entry, server-enforced countdown, answers saved as you go, refresh resumes, auto-submit when time runs out, one attempt per email
+- Link validity: an expired link blocks new candidates while anyone mid-test can finish
+- Results: status (submitted / timed out / in progress), score, unanswered count, time used and a per-question breakdown
 
 ## Local setup
 
